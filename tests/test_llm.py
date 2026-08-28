@@ -129,3 +129,29 @@ def test_adapter_rejects_empty_choices(tmp_path: Path, monkeypatch: pytest.Monke
     adapter = OpenAIChatModel(settings(tmp_path))
     with pytest.raises(ModelRequestError, match="no choices"):
         adapter.complete([], [])
+
+
+def test_adapter_explains_plain_text_response_shape(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    install_fake_openai(monkeypatch, FakeCompletions(response="upstream plain text error"))
+    adapter = OpenAIChatModel(settings(tmp_path))
+
+    with pytest.raises(ModelRequestError) as error:
+        adapter.complete([], [])
+
+    message = str(error.value)
+    assert "plain text" in message
+    assert "upstream plain text error" in message
+    assert "LLM_BASE_URL" in message
+    assert "/v1" in message
+
+
+def test_adapter_rejects_unknown_object_response_shape(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    install_fake_openai(monkeypatch, FakeCompletions(response={"choices": []}))
+    adapter = OpenAIChatModel(settings(tmp_path))
+
+    with pytest.raises(ModelRequestError, match="unsupported response shape"):
+        adapter.complete([], [])

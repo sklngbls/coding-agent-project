@@ -69,9 +69,35 @@ class OpenAIChatModel:
         except Exception as exc:
             safe_message = str(exc).replace(self._api_key, "[redacted]")
             raise ModelRequestError(safe_message) from exc
-        if not response.choices:
+
+        if isinstance(response, str):
+            preview = response.strip().replace("\r", " ").replace("\n", " ")[:160]
+            detail = f"; response preview: {preview!r}" if preview else ""
+            raise ModelRequestError(
+                "OpenAI-compatible endpoint returned plain text instead of a Chat "
+                "Completion object"
+                + detail
+                + ". Check LLM_BASE_URL points to the provider API root (usually ending "
+                "in /v1), LLM_MODEL is valid, and the gateway has Chat Completions "
+                "compatibility enabled."
+            )
+        choices = getattr(response, "choices", None)
+        if choices is None:
+            response_type = type(response).__name__
+            raise ModelRequestError(
+                "OpenAI-compatible endpoint returned an unsupported response shape "
+                f"({response_type}; expected a Chat Completion object with choices). "
+                "Check LLM_BASE_URL, LLM_MODEL, and the provider's Chat Completions "
+                "compatibility mode."
+            )
+        if not choices:
             raise ModelRequestError("Model returned no choices")
-        message = response.choices[0].message
+        message = getattr(choices[0], "message", None)
+        if message is None:
+            raise ModelRequestError(
+                "Chat Completion response contained a choice without a message; "
+                "check the provider's Chat Completions response format."
+            )
         normalized_calls: list[ToolCall] = []
         for call in message.tool_calls or []:
             function = call.function
