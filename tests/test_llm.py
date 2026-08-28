@@ -3,7 +3,7 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
-from typing import Any
+from typing import Any, ClassVar
 
 import pytest
 
@@ -24,23 +24,30 @@ class FakeCompletions:
         return self.response
 
 
+class FakeOpenAI:
+    last_init: ClassVar[dict[str, str] | None] = None
+    completions: ClassVar[FakeCompletions | None] = None
+    init_error: ClassVar[Exception | None] = None
+
+    def __init__(self, *, api_key: str, base_url: str) -> None:
+        error = type(self).init_error
+        if error is not None:
+            raise error
+        type(self).last_init = {"api_key": api_key, "base_url": base_url}
+        if type(self).completions is None:
+            raise AssertionError("Fake completions were not configured")
+        self.chat = SimpleNamespace(completions=type(self).completions)
+
+
 def install_fake_openai(
     monkeypatch: pytest.MonkeyPatch,
     completions: FakeCompletions,
     *,
     init_error: Exception | None = None,
-) -> type:
+) -> type[FakeOpenAI]:
     module = ModuleType("openai")
-
-    class FakeOpenAI:
-        last_init: dict[str, str] | None = None
-
-        def __init__(self, *, api_key: str, base_url: str) -> None:
-            if init_error is not None:
-                raise init_error
-            type(self).last_init = {"api_key": api_key, "base_url": base_url}
-            self.chat = SimpleNamespace(completions=completions)
-
+    FakeOpenAI.completions = completions
+    FakeOpenAI.init_error = init_error
     module.OpenAI = FakeOpenAI  # type: ignore[attr-defined]
     monkeypatch.setitem(sys.modules, "openai", module)
     return FakeOpenAI
@@ -145,6 +152,24 @@ def test_adapter_explains_plain_text_response_shape(
     assert "upstream plain text error" in message
     assert "LLM_BASE_URL" in message
     assert "/v1" in message
+
+
+def test_adapter_redacts_api_key_from_plain_text_preview(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    secret = "plain-text-secret"
+    install_fake_openai(
+        monkeypatch,
+        FakeCompletions(response=f"upstream failure includes {secret} and more details"),
+    )
+    adapter = OpenAIChatModel(settings(tmp_path, api_key=secret))
+
+    with pytest.raises(ModelRequestError) as error:
+        adapter.complete([], [])
+
+    message = str(error.value)
+    assert secret not in message
+    assert "[redacted]" in message
 
 
 def test_adapter_rejects_unknown_object_response_shape(

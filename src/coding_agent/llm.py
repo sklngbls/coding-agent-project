@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass, field
-from typing import Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol, cast
 
 from .config import Settings
+
+if TYPE_CHECKING:
+    from openai.types.chat import ChatCompletionMessageParam, ChatCompletionToolUnionParam
 
 
 class ModelRequestError(RuntimeError):
@@ -61,17 +65,22 @@ class OpenAIChatModel:
         self, messages: list[dict[str, Any]], tools: list[dict[str, Any]]
     ) -> ModelResponse:
         try:
+            # The core keeps provider-neutral JSON-like messages. Cast only at this
+            # SDK boundary to match OpenAI Python 2.x's generated parameter unions.
+            sdk_messages = cast("Iterable[ChatCompletionMessageParam]", messages)
+            sdk_tools = cast("Iterable[ChatCompletionToolUnionParam]", tools)
             response = self._client.chat.completions.create(
                 model=self._model,
-                messages=messages,
-                tools=tools,
+                messages=sdk_messages,
+                tools=sdk_tools,
             )
         except Exception as exc:
             safe_message = str(exc).replace(self._api_key, "[redacted]")
             raise ModelRequestError(safe_message) from exc
 
         if isinstance(response, str):
-            preview = response.strip().replace("\r", " ").replace("\n", " ")[:160]
+            normalized_response = response.strip().replace("\r", " ").replace("\n", " ")
+            preview = self._redact(normalized_response)[:160]
             detail = f"; response preview: {preview!r}" if preview else ""
             raise ModelRequestError(
                 "OpenAI-compatible endpoint returned plain text instead of a Chat "
@@ -112,3 +121,8 @@ class OpenAIChatModel:
             content=message.content,
             tool_calls=normalized_calls,
         )
+
+    def _redact(self, value: str) -> str:
+        """Remove the configured credential from any diagnostic text."""
+
+        return value.replace(self._api_key, "[redacted]") if self._api_key else value
