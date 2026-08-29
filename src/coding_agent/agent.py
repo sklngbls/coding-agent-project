@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import copy
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
 
+from .history import truncate_messages
 from .llm import ChatModel, ModelResponse
 from .tools import ToolRegistry
 
@@ -62,30 +64,51 @@ class CodingAgent:
         *,
         workspace: str | Path,
         max_steps: int = 20,
+        max_history_messages: int = 100,
         on_progress: ProgressCallback | None = None,
     ) -> None:
         if max_steps < 1:
             raise ValueError("max_steps must be at least 1")
+        if max_history_messages < 2:
+            raise ValueError("max_history_messages must be at least 2")
         self.model = model
         self.tools = tools
         self.workspace = Path(workspace).resolve()
         self.max_steps = max_steps
+        self.max_history_messages = max_history_messages
         self.on_progress = on_progress
 
-    def run(self, task: str) -> AgentResult:
+    def run(
+        self,
+        task: str,
+        history: list[dict[str, Any]] | None = None,
+    ) -> AgentResult:
         if not isinstance(task, str) or not task.strip():
             raise ValueError("task must be a non-empty string")
-        messages: list[dict[str, Any]] = [
-            {
-                "role": "system",
-                "content": SYSTEM_PROMPT,
-            },
-            {"role": "user", "content": task.strip()},
-        ]
+        if history is not None:
+            if not isinstance(history, list) or any(
+                not isinstance(message, dict) for message in history
+            ):
+                raise ValueError("history must be a list of message objects")
+            # Keep the caller's list and nested values untouched while trimming old context.
+            messages = copy.deepcopy(history)
+            if not messages or messages[0].get("role") != "system":
+                messages.insert(0, {"role": "system", "content": SYSTEM_PROMPT})
+            messages = truncate_messages(messages, self.max_history_messages - 1)
+            messages.append({"role": "user", "content": task.strip()})
+        else:
+            messages = [
+                {
+                    "role": "system",
+                    "content": SYSTEM_PROMPT,
+                },
+                {"role": "user", "content": task.strip()},
+            ]
 
         for step in range(1, self.max_steps + 1):
             self._emit(ProgressEvent(step=step, kind="model", message="Requesting model response"))
             try:
+                messages = truncate_messages(messages, self.max_history_messages)
                 response = self.model.complete(messages, self.tools.schemas)
             except Exception as exc:
                 answer = f"Model request failed: {exc}"

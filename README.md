@@ -25,7 +25,9 @@ src/coding_agent/
 ├── agent.py       # 消息历史、system prompt、多轮循环和终止条件
 ├── cli.py         # 命令行参数、交互输入和进度输出
 ├── config.py      # 环境变量与运行参数校验
+├── history.py     # 保持完整工具调用轮次的消息历史截断
 ├── llm.py         # 模型协议和 OpenAI 兼容适配器
+├── sessions.py    # 工作区隔离的本地持久化会话
 └── tools.py       # 工作区边界、文件工具、命令工具和分发器
 tests/             # 全部使用 fake/mock 模型，不访问真实 API
 ```
@@ -75,6 +77,34 @@ coding-agent --workspace C:\path\to\project "修复解析器的空输入错误�
 coding-agent --workspace C:\path\to\project
 Task: 为现有 API 增加分页参数和单元测试
 ```
+
+## 持久化会话
+
+每次带任务的旧式调用默认创建一个新的会话并保存消息历史，因此不同任务不会悄悄混在
+一起。命令行也可以显式续接会话：
+
+```powershell
+# 继续指定会话（SESSION_ID 会在上一次运行的 stderr 中显示）
+coding-agent --workspace C:\path\to\project --session SESSION_ID "继续修复测试失败"
+
+# 继续该工作区最近一次会话
+coding-agent --workspace C:\path\to\project --continue "检查刚才的修改"
+
+# 不带任务时进入连续交互，空行、exit、quit 或 EOF 退出
+coding-agent --workspace C:\path\to\project --continue
+
+# 明确开始一个全新会话
+coding-agent --workspace C:\path\to\project --new-session "实现下一个功能"
+```
+
+会话按规范化工作区路径的 SHA-256 前缀分目录保存。Windows 默认位置为
+`%LOCALAPPDATA%\coding-agent\sessions`；其他平台优先使用 `$XDG_DATA_HOME`，否则回退到
+`~/.local/share/coding-agent/sessions`。文件通过临时文件加替换原子写入，损坏的 JSON 会
+报告为会话错误。历史会限制最大消息数，并在保存前递归脱敏已知 `LLM_API_KEY`，所以 API
+Key 不会写入会话文件。
+
+这是本机历史，不是模型服务端记忆。继续会话时，受限的消息窗口才会发送给模型；消息中的
+文件内容和工具输出仍可能发送到配置的第三方兼容接口，请按服务商的数据政策使用。
 
 常用运行参数：
 

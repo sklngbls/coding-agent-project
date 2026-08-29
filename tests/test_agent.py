@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from coding_agent.agent import CodingAgent, ProgressEvent
+from coding_agent.agent import SYSTEM_PROMPT, CodingAgent, ProgressEvent
 from coding_agent.llm import ModelResponse, ToolCall
 from coding_agent.tools import LocalTools, ToolRegistry
 
@@ -186,3 +186,81 @@ def test_empty_model_content_is_handled(tmp_path: Path) -> None:
     result = agent.run("Finish")
     assert result.status == "completed"
     assert "without a final text" in result.final_answer
+
+
+def test_run_continues_existing_history_without_duplicate_system_or_mutation(
+    tmp_path: Path,
+) -> None:
+    history = [
+        {"role": "system", "content": "existing system"},
+        {"role": "user", "content": "earlier task"},
+        {"role": "assistant", "content": "earlier answer"},
+    ]
+    original_history = json.loads(json.dumps(history))
+    agent, model = build_agent(tmp_path, [ModelResponse(content="continued")])
+
+    result = agent.run("next task", history=history)
+
+    assert result.status == "completed"
+    assert history == original_history
+    sent = model.calls[0][0]
+    assert [message["role"] for message in sent] == ["system", "user", "assistant", "user"]
+    assert sum(message["role"] == "system" for message in sent) == 1
+    assert sent[-1]["content"] == "next task"
+
+
+def test_run_adds_system_prompt_when_history_has_none(tmp_path: Path) -> None:
+    history: list[dict[str, Any]] = [{"role": "user", "content": "earlier task"}]
+    agent, model = build_agent(tmp_path, [ModelResponse(content="done")])
+
+    result = agent.run("latest task", history=history)
+
+    assert result.status == "completed"
+    sent = model.calls[0][0]
+    assert [message["role"] for message in sent] == ["system", "user", "user"]
+    assert sent[0]["content"] == SYSTEM_PROMPT
+
+
+def test_long_history_is_bounded_before_model_call(tmp_path: Path) -> None:
+    history = [{"role": "system", "content": "system"}]
+    history.extend({"role": "user", "content": str(index)} for index in range(20))
+    agent, model = build_agent(tmp_path, [ModelResponse(content="done")])
+    agent.max_history_messages = 5
+
+    result = agent.run("latest", history=history)
+
+    assert result.status == "completed"
+    sent = model.calls[0][0]
+    assert len(sent) == 5
+    assert sent[0]["role"] == "system"
+    assert sent[-1]["content"] == "latest"
+
+
+def test_history_limit_does_not_split_tool_call_round(tmp_path: Path) -> None:
+    history: list[dict[str, Any]] = [
+        {"role": "system", "content": "system"},
+        {"role": "user", "content": "old task"},
+        {
+            "role": "assistant",
+            "content": None,
+            "tool_calls": [
+                {
+                    "id": "old-call",
+                    "type": "function",
+                    "function": {"name": "read_file", "arguments": "{}"},
+                }
+            ],
+        },
+        {"role": "tool", "tool_call_id": "old-call", "content": "old result"},
+        {"role": "user", "content": "current task"},
+    ]
+    agent, model = build_agent(tmp_path, [ModelResponse(content="done")])
+    agent.max_history_messages = 4
+
+    result = agent.run("latest task", history=history)
+
+    assert result.status == "completed"
+    sent = model.calls[0][0]
+    assert [message["role"] for message in sent] == ["system", "user", "user"]
+    assert sent[-2]["content"] == "current task"
+    assert sent[-1]["content"] == "latest task"
