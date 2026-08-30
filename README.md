@@ -87,9 +87,6 @@ Task: 为现有 API 增加分页参数和单元测试
 # 推荐：显示编号菜单，输入数字选择旧会话或新建会话
 coding-agent --workspace C:\path\to\project --select-session
 
-# 继续指定会话（SESSION_ID 会在上一次运行的 stderr 中显示）
-coding-agent --workspace C:\path\to\project --session SESSION_ID "继续修复测试失败"
-
 # 继续该工作区最近一次会话
 coding-agent --workspace C:\path\to\project --continue "检查刚才的修改"
 

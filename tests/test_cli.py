@@ -64,39 +64,11 @@ def test_cli_reports_missing_workspace(
     assert "Workspace does not exist" in captured.err
 
 
-def test_cli_session_option_continues_history_without_duplicate_system(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    configure_environment(monkeypatch, tmp_path)
-    real_store = cli.SessionStore
-
-    def make_store(workspace: Path, *, api_key: str | None = None) -> SessionStore:
-        return real_store(
-            workspace,
-            storage_root=tmp_path.parent / f"{tmp_path.name}-sessions",
-            api_key=api_key,
+def test_cli_rejects_removed_session_id_option() -> None:
+    with pytest.raises(SystemExit):
+        cli.build_parser().parse_args(
+            ["--workspace", ".", "--session", "a" * 32, "second task"]
         )
-
-    monkeypatch.setattr(cli, "SessionStore", make_store)
-    first_model = FakeModel([ModelResponse(content="first")])
-    monkeypatch.setattr(cli, "OpenAIChatModel", lambda settings: first_model)
-    assert cli.main(["--workspace", str(tmp_path), "first task"]) == 0
-    session_id = make_store(tmp_path).get_recent()
-    assert session_id is not None
-
-    second_model = FakeModel([ModelResponse(content="second")])
-    monkeypatch.setattr(cli, "OpenAIChatModel", lambda settings: second_model)
-    exit_code = cli.main(
-        ["--workspace", str(tmp_path), "--session", session_id.session_id, "second task"]
-    )
-
-    assert exit_code == 0
-    sent = second_model.calls[0][0]
-    assert sum(message["role"] == "system" for message in sent) == 1
-    assert sent[-1]["content"] == "second task"
-    assert "[session" in capsys.readouterr().err
 
 
 def test_cli_continue_without_task_accepts_multiple_tasks_and_saves_each(

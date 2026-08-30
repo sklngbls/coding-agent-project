@@ -30,7 +30,6 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--max-steps", type=int, default=20)
     parser.add_argument("--command-timeout", type=float, default=20.0)
     session_modes = parser.add_mutually_exclusive_group()
-    session_modes.add_argument("--session", metavar="SESSION_ID", help="Continue a session")
     session_modes.add_argument(
         "--continue",
         dest="continue_session",
@@ -170,7 +169,7 @@ def _validate_session_arguments(args: argparse.Namespace) -> str | None:
         return "--title cannot be used with --select-session"
     if args.title is not None and not args.title.strip():
         return "--title must not be empty"
-    if args.title is not None and (args.session or args.continue_session):
+    if args.title is not None and args.continue_session:
         return "--title can only be used when starting a new session"
     return None
 
@@ -241,8 +240,6 @@ def _select_session(
     args: argparse.Namespace,
     task: str | None = None,
 ) -> tuple[Session, bool]:
-    if args.session:
-        return session_store.load(args.session), True
     if args.continue_session:
         recent = session_store.get_recent()
         if recent is not None:
@@ -257,7 +254,6 @@ def _interactive_loop(agent: CodingAgent, session_store: SessionStore, api_key: 
         session, continuing = _select_session(
             session_store,
             argparse.Namespace(
-                session=None,
                 continue_session=True,
                 new_session=False,
                 title=None,
