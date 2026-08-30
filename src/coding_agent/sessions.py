@@ -41,6 +41,7 @@ class Session:
     """A persisted conversation and its workspace ownership metadata."""
 
     session_id: str
+    title: str
     workspace: str
     created_at: str
     updated_at: str
@@ -52,6 +53,21 @@ SessionList = list[Session]
 
 
 _SESSION_ID = re.compile(r"[0-9a-f]{32}\Z")
+_MAX_TITLE_CHARS = 60
+UNTITLED_SESSION_TITLE = "Untitled session"
+
+
+def make_session_title(value: str | None) -> str:
+    """Create a compact, single-line title suitable for terminal display."""
+
+    if value is None:
+        return UNTITLED_SESSION_TITLE
+    normalized = " ".join(value.split())
+    if not normalized:
+        return UNTITLED_SESSION_TITLE
+    if len(normalized) <= _MAX_TITLE_CHARS:
+        return normalized
+    return normalized[: _MAX_TITLE_CHARS - 3].rstrip() + "..."
 
 
 def normalize_workspace(workspace: str | Path) -> Path:
@@ -106,16 +122,23 @@ class SessionStore:
         self.api_key = api_key or ""
         self.max_messages = max_messages
 
-    def create(self, messages: MessageHistory | None = None) -> Session:
+    def create(
+        self,
+        messages: MessageHistory | None = None,
+        *,
+        title: str | None = None,
+    ) -> Session:
         """Create an unsaved session with a fresh ID and current timestamps."""
 
         now = _utc_now()
+        prepared_messages = self._prepare_messages(messages or [])
         return Session(
             session_id=uuid.uuid4().hex,
+            title=self._prepare_title(title, prepared_messages),
             workspace=str(self.workspace_path),
             created_at=now,
             updated_at=now,
-            messages=self._prepare_messages(messages or []),
+            messages=prepared_messages,
         )
 
     def save(self, session: Session) -> Session:
@@ -130,9 +153,11 @@ class SessionStore:
         try:
             created_at = _validate_timestamp(session.created_at, "created_at")
             messages = self._prepare_messages(session.messages)
+            title = self._prepare_title(session.title, messages)
             updated_at = _utc_now()
             payload = {
                 "session_id": session.session_id,
+                "title": title,
                 "workspace": str(self.workspace_path),
                 "created_at": created_at,
                 "updated_at": updated_at,
@@ -171,6 +196,7 @@ class SessionStore:
                     pass
 
         session.workspace = str(self.workspace_path)
+        session.title = title
         session.created_at = created_at
         session.updated_at = updated_at
         session.messages = messages
@@ -228,6 +254,9 @@ class SessionStore:
                 not isinstance(item, dict) for item in messages
             ):
                 raise ValueError("messages must be a list of JSON objects")
+            raw_title = payload.get("title")
+            if raw_title is not None and not isinstance(raw_title, str):
+                raise ValueError("title must be a string")
         except (KeyError, TypeError, ValueError) as exc:
             raise SessionCorruptError(f"Invalid session file {path}: {exc}") from exc
         if _SESSION_ID.fullmatch(session_id) is None:
@@ -241,6 +270,7 @@ class SessionStore:
             )
         return Session(
             session_id=session_id,
+            title=self._prepare_title(raw_title, messages),
             workspace=str(normalized_workspace),
             created_at=created_at,
             updated_at=updated_at,
@@ -260,6 +290,13 @@ class SessionStore:
         if any(not isinstance(message, dict) for message in sanitized):
             raise ValueError("messages must be a list of JSON objects")
         return truncate_messages(sanitized, self.max_messages)
+
+    def _prepare_title(self, title: str | None, messages: MessageHistory) -> str:
+        if title is not None and not isinstance(title, str):
+            raise ValueError("title must be a string")
+        candidate = title if title and title.strip() else _first_user_message(messages)
+        redacted = _redact_value(candidate, self.api_key)
+        return make_session_title(redacted if isinstance(redacted, str) else None)
 
     @staticmethod
     def _validate_session_id(session_id: str) -> None:
@@ -286,6 +323,13 @@ def _validate_timestamp(value: str, field: str) -> str:
     except ValueError as exc:
         raise ValueError(f"{field} must be an ISO-8601 timestamp") from exc
     return value
+
+
+def _first_user_message(messages: MessageHistory) -> str | None:
+    for message in messages:
+        if message.get("role") == "user" and isinstance(message.get("content"), str):
+            return message["content"]
+    return None
 
 
 def _redact_value(value: Any, api_key: str) -> Any:

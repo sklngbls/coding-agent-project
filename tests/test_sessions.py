@@ -6,10 +6,12 @@ from pathlib import Path
 import pytest
 
 from coding_agent.sessions import (
+    UNTITLED_SESSION_TITLE,
     SessionCorruptError,
     SessionError,
     SessionStore,
     SessionWorkspaceError,
+    make_session_title,
     workspace_key,
 )
 
@@ -25,6 +27,7 @@ def test_create_save_load_list_and_recent(tmp_path: Path) -> None:
     listed = store.list()
 
     assert loaded.session_id == first.session_id
+    assert loaded.title == UNTITLED_SESSION_TITLE
     assert {item.session_id for item in listed} == {first.session_id, second.session_id}
     recent = store.get_recent()
     assert recent is not None
@@ -75,7 +78,8 @@ def test_save_is_atomic_and_redacts_api_key_recursively(tmp_path: Path) -> None:
                 "role": "tool",
                 "content": {"stdout": ["nested", secret], "stderr": secret},
             },
-        ]
+        ],
+        title=f"title={secret}",
     )
     store.save(session)
 
@@ -84,6 +88,34 @@ def test_save_is_atomic_and_redacts_api_key_recursively(tmp_path: Path) -> None:
     assert secret not in raw
     assert "[redacted]" in raw
     assert not list(store.workspace_dir.glob(".*.tmp"))
+    assert session.title == "title=[redacted]"
+
+
+def test_title_is_generated_from_first_user_message_and_normalized(tmp_path: Path) -> None:
+    store = SessionStore(tmp_path / "workspace", storage_root=tmp_path / "sessions")
+    task = "  Add   session titles\n and list existing conversations  "
+
+    session = store.create([{"role": "user", "content": task}])
+    manual = store.create(title="  Manual   title  ")
+
+    assert session.title == "Add session titles and list existing conversations"
+    assert manual.title == "Manual title"
+    assert len(make_session_title("x" * 100)) == 60
+    assert make_session_title("x" * 100).endswith("...")
+
+
+def test_legacy_session_without_title_uses_first_user_message(tmp_path: Path) -> None:
+    store = SessionStore(tmp_path / "workspace", storage_root=tmp_path / "sessions")
+    session = store.create([{"role": "user", "content": "Legacy task title"}])
+    store.save(session)
+    path = store.workspace_dir / f"{session.session_id}.json"
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    del payload["title"]
+    path.write_text(json.dumps(payload), encoding="utf-8")
+
+    loaded = store.load(session.session_id)
+
+    assert loaded.title == "Legacy task title"
 
 
 def test_failed_atomic_replace_preserves_existing_file(

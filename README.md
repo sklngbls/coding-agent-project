@@ -95,13 +95,21 @@ coding-agent --workspace C:\path\to\project --continue
 
 # 明确开始一个全新会话
 coding-agent --workspace C:\path\to\project --new-session "实现下一个功能"
+
+# 手动指定新会话标题；未指定时使用第一次任务生成标题
+coding-agent --workspace C:\path\to\project --title "分页功能" "为 API 增加分页参数"
+
+# 查看该工作区的所有会话（不需要模型 API 配置，也不会请求模型）
+coding-agent --workspace C:\path\to\project --list-sessions
 ```
 
 会话按规范化工作区路径的 SHA-256 前缀分目录保存。Windows 默认位置为
 `%LOCALAPPDATA%\coding-agent\sessions`；其他平台优先使用 `$XDG_DATA_HOME`，否则回退到
 `~/.local/share/coding-agent/sessions`。文件通过临时文件加替换原子写入，损坏的 JSON 会
 报告为会话错误。历史会限制最大消息数，并在保存前递归脱敏已知 `LLM_API_KEY`，所以 API
-Key 不会写入会话文件。
+Key 不会写入会话文件。每个会话同时保存标题和唯一 ID；自动标题取第一次用户任务、合并
+换行与多余空格，并限制为 60 个字符。旧版会话没有标题字段时，会在读取时根据第一条用户
+消息生成标题。
 
 这是本机历史，不是模型服务端记忆。继续会话时，受限的消息窗口才会发送给模型；消息中的
 文件内容和工具输出仍可能发送到配置的第三方兼容接口，请按服务商的数据政策使用。

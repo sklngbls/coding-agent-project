@@ -33,6 +33,7 @@ def test_cli_runs_agent_with_fake_model(
     assert exit_code == 0
     assert "Task complete." in captured.out
     assert "[step 1]" in captured.err
+    assert "Do the task" in captured.err
 
 
 def test_cli_reports_missing_configuration(
@@ -166,6 +167,76 @@ def test_cli_default_tasks_are_separate_and_continue_uses_recent(
     assert recent_user_tasks == ["second task", "third task"]
 
 
+def test_cli_manual_title_is_saved(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    configure_environment(monkeypatch, tmp_path)
+    fake = FakeModel([ModelResponse(content="done")])
+    monkeypatch.setattr(cli, "OpenAIChatModel", lambda settings: fake)
+
+    exit_code = cli.main(
+        ["--workspace", str(tmp_path), "--title", "Session management", "Do the task"]
+    )
+
+    assert exit_code == 0
+    recent = SessionStore(tmp_path).get_recent()
+    assert recent is not None
+    assert recent.title == "Session management"
+
+
+def test_cli_lists_sessions_without_model_configuration(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    configure_environment(monkeypatch, tmp_path)
+    store = SessionStore(tmp_path)
+    session = store.create([{"role": "user", "content": "Saved conversation"}])
+    store.save(session)
+    for name in ("LLM_API_KEY", "LLM_BASE_URL", "LLM_MODEL"):
+        monkeypatch.delenv(name, raising=False)
+
+    def fail_model(_settings: object) -> None:
+        raise AssertionError("list mode must not initialize the model")
+
+    monkeypatch.setattr(cli, "OpenAIChatModel", fail_model)
+    exit_code = cli.main(["--workspace", str(tmp_path), "--list-sessions"])
+
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    assert "UPDATED | TITLE | SESSION ID" in captured.out
+    assert "Saved conversation" in captured.out
+    assert session.session_id in captured.out
+
+
+def test_cli_list_reports_no_sessions(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path.parent / f"{tmp_path.name}-localappdata"))
+
+    exit_code = cli.main(["--workspace", str(tmp_path), "--list-sessions"])
+
+    assert exit_code == 0
+    assert "No sessions found" in capsys.readouterr().out
+
+
+def test_cli_rejects_title_when_continuing(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    exit_code = cli.main(
+        ["--workspace", str(tmp_path), "--continue", "--title", "invalid", "task"]
+    )
+
+    assert exit_code == 2
+    assert "--title can only be used" in capsys.readouterr().err
+
+
 def test_cli_session_mode_flags_are_mutually_exclusive() -> None:
     with pytest.raises(SystemExit):
         cli.build_parser().parse_args(["--workspace", ".", "--continue", "--new-session", "task"])
+    with pytest.raises(SystemExit):
+        cli.build_parser().parse_args(["--workspace", ".", "--continue", "--list-sessions"])
