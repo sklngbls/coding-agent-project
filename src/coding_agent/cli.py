@@ -19,6 +19,7 @@ from .sessions import (
     make_session_title,
 )
 from .tools import LocalTools, ToolInputError, ToolRegistry
+from .workspaces import WorkspaceError, WorkspaceStore
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -26,7 +27,10 @@ def build_parser() -> argparse.ArgumentParser:
         prog="coding-agent",
         description="Run a coding agent in a restricted local workspace.",
     )
-    parser.add_argument("--workspace", required=True, help="Workspace directory")
+    parser.add_argument(
+        "--workspace",
+        help="Workspace directory; omit to choose one after startup",
+    )
     parser.add_argument("--max-steps", type=int, default=20)
     parser.add_argument("--command-timeout", type=float, default=20.0)
     session_modes = parser.add_mutually_exclusive_group()
@@ -57,10 +61,24 @@ def main(argv: list[str] | None = None) -> int:
     if validation_error is not None:
         print(f"Argument error: {validation_error}", file=sys.stderr)
         return 2
+    try:
+        workspace = _resolve_workspace(args.workspace)
+    except WorkspaceError as exc:
+        print(f"Workspace error: {exc}", file=sys.stderr)
+        return 2
+    if workspace is None:
+        return 0
     session_choice: tuple[Literal["existing", "new"], str | None] | None = None
-    if args.select_session:
+    choose_session = args.select_session or (
+        args.workspace is None
+        and args.task is None
+        and not args.continue_session
+        and not args.new_session
+        and args.title is None
+    )
+    if choose_session:
         try:
-            selected = _prompt_session_choice(args.workspace)
+            selected = _prompt_session_choice(str(workspace))
         except (OSError, SessionError, ValueError) as exc:
             print(f"Session error: {exc}", file=sys.stderr)
             return 2
@@ -70,13 +88,14 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         settings = Settings.from_environment(
-            args.workspace,
+            workspace,
             max_steps=args.max_steps,
             command_timeout=args.command_timeout,
         )
     except ConfigurationError as exc:
         print(f"Configuration error: {exc}", file=sys.stderr)
         return 2
+    _remember_workspace(settings.workspace)
 
     try:
         session_store = SessionStore(settings.workspace, api_key=settings.api_key)
@@ -160,6 +179,89 @@ def _validate_session_arguments(args: argparse.Namespace) -> str | None:
     if args.title is not None and args.continue_session:
         return "--title can only be used when starting a new session"
     return None
+
+
+def _resolve_workspace(workspace_value: str | None) -> Path | None:
+    """Use an explicit workspace or ask the user to choose one."""
+
+    if workspace_value is not None:
+        workspace = _validate_workspace_path(workspace_value)
+        return workspace
+    try:
+        selected = _prompt_workspace_choice()
+    except WorkspaceError as exc:
+        print(f"Workspace error: {exc}", file=sys.stderr)
+        return None
+    if selected is None:
+        return None
+    return selected
+
+
+def _prompt_workspace_choice() -> Path | None:
+    """Prompt for a recent workspace or a new path."""
+
+    try:
+        records = WorkspaceStore().list()
+    except WorkspaceError as exc:
+        print(f"Could not read recent workspaces: {exc}", file=sys.stderr)
+        records = []
+
+    print("Select a workspace:")
+    for index, record in enumerate(records, start=1):
+        print(f"[{index}] {record.path}")
+    if not records:
+        print("No recent workspaces.")
+    print("[0] Enter a workspace path")
+    print("[q] Cancel")
+
+    while True:
+        try:
+            value = input("Workspace: ").strip().casefold()
+        except (EOFError, KeyboardInterrupt):
+            print("")
+            return None
+        if not value or value in {"q", "quit", "exit"}:
+            return None
+        if value in {"0", "n", "new"}:
+            try:
+                raw_path = input("Workspace path (Enter for current directory): ").strip()
+            except (EOFError, KeyboardInterrupt):
+                print("")
+                return None
+            if raw_path.casefold() in {"q", "quit", "exit"}:
+                return None
+            try:
+                return _validate_workspace_path(raw_path or Path.cwd())
+            except WorkspaceError as exc:
+                print(f"Workspace error: {exc}")
+                continue
+        try:
+            index = int(value)
+        except ValueError:
+            index = -1
+        if 1 <= index <= len(records):
+            try:
+                return _validate_workspace_path(records[index - 1].path)
+            except WorkspaceError as exc:
+                print(f"Workspace error: {exc}")
+                continue
+        print(f"Invalid selection. Enter 0-{len(records)} or q to cancel.")
+
+
+def _validate_workspace_path(value: str | Path) -> Path:
+    workspace = Path(value).expanduser().resolve()
+    if not workspace.exists():
+        raise WorkspaceError(f"Workspace does not exist: {workspace}")
+    if not workspace.is_dir():
+        raise WorkspaceError(f"Workspace is not a directory: {workspace}")
+    return workspace
+
+
+def _remember_workspace(workspace: Path) -> None:
+    try:
+        WorkspaceStore().remember(workspace)
+    except WorkspaceError as exc:
+        print(f"Warning: could not save recent workspace: {exc}", file=sys.stderr)
 
 
 def _prompt_session_choice(

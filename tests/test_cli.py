@@ -7,6 +7,7 @@ import pytest
 from coding_agent import cli
 from coding_agent.llm import ModelResponse
 from coding_agent.sessions import SessionStore
+from coding_agent.workspaces import WorkspaceStore
 
 from .test_agent import FakeModel
 
@@ -62,6 +63,83 @@ def test_cli_reports_missing_workspace(
     captured = capsys.readouterr()
     assert exit_code == 2
     assert "Workspace does not exist" in captured.err
+
+
+def test_cli_workspace_is_optional() -> None:
+    args = cli.build_parser().parse_args([])
+
+    assert args.workspace is None
+
+
+def test_cli_without_workspace_uses_recent_workspace(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    configure_environment(monkeypatch, tmp_path)
+    workspace = tmp_path / "recent-project"
+    workspace.mkdir()
+    WorkspaceStore().remember(workspace)
+    fake = FakeModel([ModelResponse(content="Task complete.")])
+    monkeypatch.setattr(cli, "OpenAIChatModel", lambda settings: fake)
+    inputs = iter(["1", "0", "Do the task", "quit"])
+    monkeypatch.setattr("builtins.input", lambda _prompt: next(inputs))
+
+    exit_code = cli.main(["--select-session"])
+
+    assert exit_code == 0
+    recent = SessionStore(workspace).get_recent()
+    assert recent is not None
+    assert recent.title == "Do the task"
+
+
+def test_cli_without_arguments_selects_workspace_then_session(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    configure_environment(monkeypatch, tmp_path)
+    workspace = tmp_path / "recent-project"
+    workspace.mkdir()
+    WorkspaceStore().remember(workspace)
+    fake = FakeModel([ModelResponse(content="Task complete.")])
+    monkeypatch.setattr(cli, "OpenAIChatModel", lambda settings: fake)
+    inputs = iter(["1", "0", "Do the task", "quit"])
+    monkeypatch.setattr("builtins.input", lambda _prompt: next(inputs))
+
+    exit_code = cli.main([])
+
+    assert exit_code == 0
+    recent = SessionStore(workspace).get_recent()
+    assert recent is not None
+    assert recent.title == "Do the task"
+
+
+def test_cli_without_workspace_accepts_a_new_path(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    configure_environment(monkeypatch, tmp_path)
+    workspace = tmp_path / "new-project"
+    workspace.mkdir()
+    monkeypatch.setattr(
+        "builtins.input",
+        lambda prompt: "0" if prompt == "Workspace: " else str(workspace),
+    )
+
+    selected = cli._resolve_workspace(None)
+
+    assert selected == workspace.resolve()
+
+
+def test_cli_without_workspace_can_cancel_before_configuration(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "localappdata"))
+    for name in ("LLM_API_KEY", "LLM_BASE_URL", "LLM_MODEL"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setattr("builtins.input", lambda _prompt: "q")
+
+    assert cli.main([]) == 0
 
 
 def test_cli_rejects_removed_session_id_option() -> None:
