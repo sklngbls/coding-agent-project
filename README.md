@@ -84,6 +84,9 @@ Task: 为现有 API 增加分页参数和单元测试
 一起。命令行也可以显式续接会话：
 
 ```powershell
+# 推荐：显示编号菜单，输入数字选择旧会话或新建会话
+coding-agent --workspace C:\path\to\project --select-session
+
 # 继续指定会话（SESSION_ID 会在上一次运行的 stderr 中显示）
 coding-agent --workspace C:\path\to\project --session SESSION_ID "继续修复测试失败"
 
@@ -102,6 +105,10 @@ coding-agent --workspace C:\path\to\project --title "分页功能" "为 API 增�
 # 查看该工作区的所有会话（不需要模型 API 配置，也不会请求模型）
 coding-agent --workspace C:\path\to\project --list-sessions
 ```
+
+`--select-session` 会按最近更新时间列出会话标题。输入会话前的编号即可进入连续交互，输入
+`0` 新建会话，输入空行、`q`、`quit`、`exit` 或 EOF 取消。也可以在选择命令末尾附带一个
+任务，选择后只执行该任务并退出。
 
 会话按规范化工作区路径的 SHA-256 前缀分目录保存。Windows 默认位置为
 `%LOCALAPPDATA%\coding-agent\sessions`；其他平台优先使用 `$XDG_DATA_HOME`，否则回退到

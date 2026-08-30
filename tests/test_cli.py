@@ -223,6 +223,109 @@ def test_cli_list_reports_no_sessions(
     assert "No sessions found" in capsys.readouterr().out
 
 
+def test_cli_selects_numbered_session_and_enters_conversation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    configure_environment(monkeypatch, tmp_path)
+    store = SessionStore(tmp_path)
+    older = store.create([{"role": "user", "content": "older task"}], title="Older")
+    store.save(older)
+    newer = store.create([{"role": "user", "content": "newer task"}], title="Newer")
+    store.save(newer)
+    model = FakeModel([ModelResponse(content="continued")])
+    monkeypatch.setattr(cli, "OpenAIChatModel", lambda settings: model)
+    inputs = iter(["1", "follow-up task", "quit"])
+    monkeypatch.setattr("builtins.input", lambda _prompt: next(inputs))
+
+    exit_code = cli.main(["--workspace", str(tmp_path), "--select-session"])
+
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    assert captured.out.index("[1] Newer") < captured.out.index("[2] Older")
+    loaded = store.load(newer.session_id)
+    user_tasks = [
+        message["content"] for message in loaded.messages if message.get("role") == "user"
+    ]
+    assert user_tasks == ["newer task", "follow-up task"]
+
+
+def test_cli_selector_can_create_new_session(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    configure_environment(monkeypatch, tmp_path)
+    model = FakeModel([ModelResponse(content="created")])
+    monkeypatch.setattr(cli, "OpenAIChatModel", lambda settings: model)
+    inputs = iter(["0", "first task in new session", "exit"])
+    monkeypatch.setattr("builtins.input", lambda _prompt: next(inputs))
+
+    exit_code = cli.main(["--workspace", str(tmp_path), "--select-session"])
+
+    assert exit_code == 0
+    recent = SessionStore(tmp_path).get_recent()
+    assert recent is not None
+    assert recent.title == "first task in new session"
+
+
+def test_cli_selector_retries_invalid_input_and_cancels_before_model_setup(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path.parent / f"{tmp_path.name}-localappdata"))
+    store = SessionStore(tmp_path)
+    store.save(store.create(title="Existing"))
+    inputs = iter(["invalid", "9", "q"])
+    monkeypatch.setattr("builtins.input", lambda _prompt: next(inputs))
+
+    def fail_model(_settings: object) -> None:
+        raise AssertionError("cancelled selection must not initialize the model")
+
+    monkeypatch.setattr(cli, "OpenAIChatModel", fail_model)
+    exit_code = cli.main(["--workspace", str(tmp_path), "--select-session"])
+
+    assert exit_code == 0
+    assert capsys.readouterr().out.count("Invalid selection") == 2
+
+
+def test_cli_selector_eof_cancels_without_configuration(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path.parent / f"{tmp_path.name}-localappdata"))
+
+    def end_input(_prompt: str) -> str:
+        raise EOFError
+
+    monkeypatch.setattr("builtins.input", end_input)
+
+    assert cli.main(["--workspace", str(tmp_path), "--select-session"]) == 0
+
+
+def test_cli_selector_with_task_runs_once_in_selected_session(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    configure_environment(monkeypatch, tmp_path)
+    store = SessionStore(tmp_path)
+    session = store.create([{"role": "user", "content": "original"}], title="Selected")
+    store.save(session)
+    model = FakeModel([ModelResponse(content="done")])
+    monkeypatch.setattr(cli, "OpenAIChatModel", lambda settings: model)
+    monkeypatch.setattr("builtins.input", lambda _prompt: "1")
+
+    exit_code = cli.main(
+        ["--workspace", str(tmp_path), "--select-session", "one follow-up task"]
+    )
+
+    assert exit_code == 0
+    loaded = store.load(session.session_id)
+    assert loaded.messages[-2]["content"] == "one follow-up task"
+    assert loaded.messages[-1]["content"] == "done"
+
+
 def test_cli_rejects_title_when_continuing(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
@@ -240,3 +343,5 @@ def test_cli_session_mode_flags_are_mutually_exclusive() -> None:
         cli.build_parser().parse_args(["--workspace", ".", "--continue", "--new-session", "task"])
     with pytest.raises(SystemExit):
         cli.build_parser().parse_args(["--workspace", ".", "--continue", "--list-sessions"])
+    with pytest.raises(SystemExit):
+        cli.build_parser().parse_args(["--workspace", ".", "--continue", "--select-session"])

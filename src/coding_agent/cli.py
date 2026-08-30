@@ -6,6 +6,7 @@ import argparse
 import sys
 from datetime import datetime
 from pathlib import Path
+from typing import Literal
 
 from .agent import CodingAgent, ProgressEvent
 from .config import ConfigurationError, Settings
@@ -46,6 +47,11 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="List sessions for this workspace without calling the model",
     )
+    session_modes.add_argument(
+        "--select-session",
+        action="store_true",
+        help="Choose a session from an interactive numbered menu",
+    )
     parser.add_argument("--title", help="Title for a new session")
     parser.add_argument("task", nargs="?", help="Natural-language programming task")
     return parser
@@ -59,6 +65,17 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     if args.list_sessions:
         return _list_sessions(args.workspace)
+
+    session_choice: tuple[Literal["existing", "new"], str | None] | None = None
+    if args.select_session:
+        try:
+            selected = _prompt_session_choice(args.workspace)
+        except (OSError, SessionError, ValueError) as exc:
+            print(f"Session error: {exc}", file=sys.stderr)
+            return 2
+        if selected is None:
+            return 0
+        session_choice = selected
 
     try:
         settings = Settings.from_environment(
@@ -91,6 +108,36 @@ def main(argv: list[str] | None = None) -> int:
         on_progress=_print_progress,
     )
 
+    if session_choice is not None:
+        action, session_id = session_choice
+        try:
+            if action == "existing" and session_id is not None:
+                selected_session = session_store.load(session_id)
+                continuing = True
+            else:
+                selected_session = session_store.create()
+                continuing = False
+        except SessionError as exc:
+            print(f"Session error: {exc}", file=sys.stderr)
+            return 2
+        if args.task is None:
+            return _conversation_loop(
+                agent,
+                session_store,
+                selected_session,
+                continuing,
+                settings.api_key,
+            )
+        _print_session_status(selected_session, continuing)
+        return _run_and_save(
+            agent,
+            session_store,
+            selected_session,
+            args.task,
+            continuing,
+            settings.api_key,
+        )
+
     if args.continue_session and args.task is None:
         return _interactive_loop(agent, session_store, settings.api_key)
 
@@ -119,6 +166,8 @@ def _validate_session_arguments(args: argparse.Namespace) -> str | None:
         return "--list-sessions does not accept a task"
     if args.list_sessions and args.title is not None:
         return "--title cannot be used with --list-sessions"
+    if args.select_session and args.title is not None:
+        return "--title cannot be used with --select-session"
     if args.title is not None and not args.title.strip():
         return "--title must not be empty"
     if args.title is not None and (args.session or args.continue_session):
@@ -139,6 +188,39 @@ def _list_sessions(workspace_value: str) -> int:
     for session in sessions:
         print(f"{_format_timestamp(session.updated_at)} | {session.title} | {session.session_id}")
     return 0
+
+
+def _prompt_session_choice(
+    workspace_value: str,
+) -> tuple[Literal["existing", "new"], str | None] | None:
+    sessions = _open_session_store(workspace_value).list()
+
+    print("Select a session:")
+    for index, session in enumerate(sessions, start=1):
+        print(f"[{index}] {session.title}")
+        print(f"    {_format_timestamp(session.updated_at)} | {session.session_id}")
+    if not sessions:
+        print("No existing sessions for this workspace.")
+    print("[0] Start a new session")
+    print("[q] Cancel")
+
+    while True:
+        try:
+            value = input("Selection: ").strip().casefold()
+        except (EOFError, KeyboardInterrupt):
+            print("")
+            return None
+        if not value or value in {"q", "quit", "exit"}:
+            return None
+        if value in {"0", "n", "new"}:
+            return "new", None
+        try:
+            index = int(value)
+        except ValueError:
+            index = -1
+        if 1 <= index <= len(sessions):
+            return "existing", sessions[index - 1].session_id
+        print(f"Invalid selection. Enter 0-{len(sessions)} or q to cancel.")
 
 
 def _open_session_store(workspace_value: str) -> SessionStore:
@@ -184,6 +266,16 @@ def _interactive_loop(agent: CodingAgent, session_store: SessionStore, api_key: 
     except SessionError as exc:
         print(f"Session error: {exc}", file=sys.stderr)
         return 2
+    return _conversation_loop(agent, session_store, session, continuing, api_key)
+
+
+def _conversation_loop(
+    agent: CodingAgent,
+    session_store: SessionStore,
+    session: Session,
+    continuing: bool,
+    api_key: str,
+) -> int:
     _print_session_status(session, continuing)
     exit_code = 0
     while True:
@@ -199,7 +291,7 @@ def _interactive_loop(agent: CodingAgent, session_store: SessionStore, api_key: 
             session_store,
             session,
             task,
-            continuing=True,
+            continuing=continuing,
             api_key=api_key,
         )
         if result_code != 0:
