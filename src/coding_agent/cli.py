@@ -308,7 +308,6 @@ def _prompt_session_choice(
     for index, session in enumerate(sessions, start=1):
         print(f"[{index}] {session.title}")
         print(f"    Updated: {_format_timestamp(session.updated_at)}")
-        print(f"    ID:      {session.session_id}")
         previews = _session_history_preview(session)
         if previews:
             for preview_index, (label, content) in enumerate(previews):
@@ -483,7 +482,19 @@ def _run_and_save(
 
 def _print_session_status(session: Session, continuing: bool) -> None:
     state = "continuing" if continuing else "new"
-    print(f"[session {session.session_id}] {state}: {session.title}", file=sys.stderr)
+    print(_TURN_DIVIDER, file=sys.stderr)
+    print(f"[session] {state}: {session.title}", file=sys.stderr)
+    if not continuing:
+        return
+    previews = _session_history_preview(session)
+    if not previews:
+        return
+    print(_TURN_DIVIDER, file=sys.stderr)
+    print("[previous session]", file=sys.stderr)
+    for preview_index, (label, content) in enumerate(previews):
+        if preview_index:
+            print(f"    {_PREVIEW_DIVIDER}", file=sys.stderr)
+        print(f"    Last {label}: {content}", file=sys.stderr)
 
 
 def _redact(value: str, api_key: str) -> str:

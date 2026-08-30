@@ -296,10 +296,15 @@ def test_cli_selects_numbered_session_and_enters_conversation(
     assert exit_code == 0
     assert "Session selection" in captured.out
     assert "Updated:" in captured.out
-    assert "ID:" in captured.out
     assert "Last user: newer task" in captured.out
     assert "--------------------------------" in captured.out
     assert "Last agent: previous answer" in captured.out
+    assert "[previous session]" in captured.err
+    assert "-" * 56 in captured.err
+    status_position = captured.err.index("[session]")
+    assert captured.err.index("-" * 56) < status_position
+    assert "Last user: newer task" in captured.err
+    assert "Last agent: previous answer" in captured.err
     assert captured.out.index("[1] Newer") < captured.out.index("[2] Older")
     loaded = store.load(newer.session_id)
     user_tasks = [
