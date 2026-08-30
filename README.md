@@ -28,6 +28,7 @@ src/coding_agent/
 ├── history.py     # 保持完整工具调用轮次的消息历史截断
 ├── llm.py         # 模型协议和 OpenAI 兼容适配器
 ├── sessions.py    # 工作区隔离的本地持久化会话
+├── workspaces.py  # 最近使用工作区的本地注册表
 └── tools.py       # 工作区边界、文件工具、命令工具和分发器
 tests/             # 全部使用 fake/mock 模型，不访问真实 API
 ```
@@ -71,14 +72,21 @@ $env:LLM_MODEL="<provider-model-name>"
 coding-agent --workspace C:\path\to\project "修复解析器的空输入错误并运行测试"
 ```
 
-也可以省略 `--workspace`，启动后从最近使用的工作区中选择，或输入一个新的路径：
+也可以省略 `--workspace`。直接运行下面的命令时，会先从最近使用的工作区中选择，或输入一个新的路径，
+然后再选择会话：
 
 ```powershell
 coding-agent
 ```
 
+也可以使用简短命令启动：
+
+```powershell
+xx code
+```
+
 启动时先选择工作区，再选择会话；输入 `0` 可以输入新的工作区路径，输入 `q` 取消。
-选择工作区后省略任务时，会在终端中交互读取：
+选择工作区后省略任务时，会在终端中交互读取；如果命令中已经附带任务，则会直接创建新会话并执行：
 
 ```powershell
 coding-agent --workspace C:\path\to\project

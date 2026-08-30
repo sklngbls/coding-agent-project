@@ -21,6 +21,29 @@ from .sessions import (
 from .tools import LocalTools, ToolInputError, ToolRegistry
 from .workspaces import WorkspaceError, WorkspaceStore
 
+_BANNER_ART = r"""                                  .___
+___  ______  ___   ____  ____   __| _/____
+\  \/  /\  \/  / _/ ___\/  _ \ / __ |/ __ \
+ >    <  >    <  \  \__(  <_> ) /_/ \  ___/
+/__/\_ \/__/\_ \  \___  >____/\____ |\___  >
+      \/      \/      \/           \/    \/"""
+_BANNER_LINES = tuple(_BANNER_ART.splitlines())
+_SESSION_PREVIEW_CHARS = 72
+_PREVIEW_DIVIDER = "-" * 32
+_TURN_DIVIDER = "-" * 56
+
+
+def _render_banner() -> str:
+    """Render the built-in FIGlet-style startup title."""
+
+    rows = list(_BANNER_LINES)
+    rows.extend(("", "-" * max(len(row) for row in rows)))
+    return "\n".join(rows)
+
+
+def _print_banner() -> None:
+    print(_render_banner())
+
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
@@ -61,6 +84,7 @@ def main(argv: list[str] | None = None) -> int:
     if validation_error is not None:
         print(f"Argument error: {validation_error}", file=sys.stderr)
         return 2
+    _print_banner()
     try:
         workspace = _resolve_workspace(args.workspace)
     except WorkspaceError as exc:
@@ -171,6 +195,15 @@ def main(argv: list[str] | None = None) -> int:
     return _run_and_save(agent, session_store, session, task, continuing, settings.api_key)
 
 
+def xx_main(argv: list[str] | None = None) -> int:
+    """Launch the agent through the short xx code command alias."""
+
+    command_args = list(sys.argv[1:] if argv is None else argv)
+    if command_args and command_args[0].casefold() == "code":
+        command_args.pop(0)
+    return main(command_args)
+
+
 def _validate_session_arguments(args: argparse.Namespace) -> str | None:
     if args.select_session and args.title is not None:
         return "--title cannot be used with --select-session"
@@ -206,15 +239,17 @@ def _prompt_workspace_choice() -> Path | None:
         print(f"Could not read recent workspaces: {exc}", file=sys.stderr)
         records = []
 
-    print("Select a workspace:")
+    _print_menu_header("Workspace selection")
     for index, record in enumerate(records, start=1):
         print(f"[{index}] {record.path}")
     if not records:
         print("No recent workspaces.")
+    print()
     print("[0] Enter a workspace path")
     print("[q] Cancel")
 
     while True:
+        print()
         try:
             value = input("Workspace: ").strip().casefold()
         except (EOFError, KeyboardInterrupt):
@@ -269,16 +304,28 @@ def _prompt_session_choice(
 ) -> tuple[Literal["existing", "new"], str | None] | None:
     sessions = _open_session_store(workspace_value).list()
 
-    print("Select a session:")
+    _print_menu_header("Session selection")
     for index, session in enumerate(sessions, start=1):
         print(f"[{index}] {session.title}")
-        print(f"    {_format_timestamp(session.updated_at)} | {session.session_id}")
+        print(f"    Updated: {_format_timestamp(session.updated_at)}")
+        print(f"    ID:      {session.session_id}")
+        previews = _session_history_preview(session)
+        if previews:
+            for preview_index, (label, content) in enumerate(previews):
+                if preview_index:
+                    print(f"    {_PREVIEW_DIVIDER}")
+                print(f"    Last {label}: {content}")
+        else:
+            print("    No conversation yet")
+        print()
     if not sessions:
         print("No existing sessions for this workspace.")
+    print()
     print("[0] Start a new session")
     print("[q] Cancel")
 
     while True:
+        print()
         try:
             value = input("Selection: ").strip().casefold()
         except (EOFError, KeyboardInterrupt):
@@ -295,6 +342,45 @@ def _prompt_session_choice(
         if 1 <= index <= len(sessions):
             return "existing", sessions[index - 1].session_id
         print(f"Invalid selection. Enter 0-{len(sessions)} or q to cancel.")
+
+
+def _print_menu_header(title: str) -> None:
+    print()
+    print("=" * 56)
+    print(title)
+    print("=" * 56)
+
+
+def _session_history_preview(session: Session) -> tuple[tuple[str, str], ...]:
+    """Return compact previews of the latest user and agent messages."""
+
+    latest: dict[str, str] = {}
+    for message in reversed(session.messages):
+        role = message.get("role")
+        if role not in {"user", "assistant"} or role in latest:
+            continue
+        content = message.get("content")
+        if not isinstance(content, str):
+            continue
+        normalized = " ".join(content.split())
+        if not normalized:
+            continue
+        latest[role] = _truncate_preview(normalized)
+        if len(latest) == 2:
+            break
+
+    previews: list[tuple[str, str]] = []
+    if "user" in latest:
+        previews.append(("user", latest["user"]))
+    if "assistant" in latest:
+        previews.append(("agent", latest["assistant"]))
+    return tuple(previews)
+
+
+def _truncate_preview(value: str, limit: int = _SESSION_PREVIEW_CHARS) -> str:
+    if len(value) <= limit:
+        return value
+    return value[: limit - 3].rstrip() + "..."
 
 
 def _open_session_store(workspace_value: str) -> SessionStore:
@@ -351,7 +437,7 @@ def _conversation_loop(
     exit_code = 0
     while True:
         try:
-            task = input("Task (blank/exit/quit to stop): ").strip()
+            task = input("User task (blank/exit/quit to stop): ").strip()
         except (EOFError, KeyboardInterrupt):
             print("", file=sys.stderr)
             break
@@ -385,7 +471,8 @@ def _run_and_save(
         session.title = make_session_title(task)
     result = agent.run(task, history=session.messages if continuing else None)
     session.messages = result.messages
-    print("\n" + _redact(result.final_answer, api_key))
+    print("\nAgent:\n" + _redact(result.final_answer, api_key))
+    print(_TURN_DIVIDER)
     try:
         session_store.save(session)
     except SessionError as exc:

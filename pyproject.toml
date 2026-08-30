@@ -21,6 +21,7 @@ dev = [
 
 [project.scripts]
 coding-agent = "coding_agent.cli:main"
+xx = "coding_agent.cli:xx_main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

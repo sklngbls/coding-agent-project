@@ -71,6 +71,28 @@ def test_cli_workspace_is_optional() -> None:
     assert args.workspace is None
 
 
+def test_xx_main_accepts_code_alias(monkeypatch: pytest.MonkeyPatch) -> None:
+    received: list[list[str]] = []
+
+    def fake_main(argv: list[str]) -> int:
+        received.append(argv)
+        return 0
+
+    monkeypatch.setattr(cli, "main", fake_main)
+
+    assert cli.xx_main(["code", "--workspace", "project"]) == 0
+    assert received == [["--workspace", "project"]]
+
+
+def test_banner_uses_figlet_style_ascii_title() -> None:
+    banner = cli._render_banner()
+
+    assert "XXCODE | Coding Agent" not in banner
+    assert "-" * 44 in banner
+    assert banner.count("\n") == 7
+    assert "___  ______  ___" in banner
+
+
 def test_cli_without_workspace_uses_recent_workspace(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -133,6 +155,7 @@ def test_cli_without_workspace_accepts_a_new_path(
 def test_cli_without_workspace_can_cancel_before_configuration(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "localappdata"))
     for name in ("LLM_API_KEY", "LLM_BASE_URL", "LLM_MODEL"):
@@ -140,6 +163,8 @@ def test_cli_without_workspace_can_cancel_before_configuration(
     monkeypatch.setattr("builtins.input", lambda _prompt: "q")
 
     assert cli.main([]) == 0
+    output = capsys.readouterr().out
+    assert "-" * 39 in output
 
 
 def test_cli_rejects_removed_session_id_option() -> None:
@@ -184,7 +209,10 @@ def test_cli_continue_without_task_accepts_multiple_tasks_and_saves_each(
         message["content"] for message in recent.messages if message.get("role") == "user"
     ]
     assert user_tasks == ["first task", "second task"]
-    assert "continuing" not in capsys.readouterr().err.splitlines()[0]
+    captured = capsys.readouterr()
+    assert "continuing" not in captured.err.splitlines()[0]
+    assert captured.out.count("Agent:") == 2
+    assert captured.out.count("-" * 56) == 2
 
 
 def test_cli_default_tasks_are_separate_and_continue_uses_recent(
@@ -249,7 +277,13 @@ def test_cli_selects_numbered_session_and_enters_conversation(
     store = SessionStore(tmp_path)
     older = store.create([{"role": "user", "content": "older task"}], title="Older")
     store.save(older)
-    newer = store.create([{"role": "user", "content": "newer task"}], title="Newer")
+    newer = store.create(
+        [
+            {"role": "user", "content": "newer task"},
+            {"role": "assistant", "content": "previous answer"},
+        ],
+        title="Newer",
+    )
     store.save(newer)
     model = FakeModel([ModelResponse(content="continued")])
     monkeypatch.setattr(cli, "OpenAIChatModel", lambda settings: model)
@@ -260,6 +294,12 @@ def test_cli_selects_numbered_session_and_enters_conversation(
 
     captured = capsys.readouterr()
     assert exit_code == 0
+    assert "Session selection" in captured.out
+    assert "Updated:" in captured.out
+    assert "ID:" in captured.out
+    assert "Last user: newer task" in captured.out
+    assert "--------------------------------" in captured.out
+    assert "Last agent: previous answer" in captured.out
     assert captured.out.index("[1] Newer") < captured.out.index("[2] Older")
     loaded = store.load(newer.session_id)
     user_tasks = [
