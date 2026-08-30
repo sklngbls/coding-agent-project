@@ -99,8 +99,6 @@ coding-agent --workspace C:\path\to\project --new-session "实现下一个功能
 # 手动指定新会话标题；未指定时使用第一次任务生成标题
 coding-agent --workspace C:\path\to\project --title "分页功能" "为 API 增加分页参数"
 
-# 查看该工作区的所有会话（不需要模型 API 配置，也不会请求模型）
-coding-agent --workspace C:\path\to\project --list-sessions
 ```
 
 `--select-session` 会按最近更新时间列出会话标题。输入会话前的编号即可进入连续交互，输入

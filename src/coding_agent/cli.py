@@ -42,11 +42,6 @@ def build_parser() -> argparse.ArgumentParser:
         help="Start a new session explicitly",
     )
     session_modes.add_argument(
-        "--list-sessions",
-        action="store_true",
-        help="List sessions for this workspace without calling the model",
-    )
-    session_modes.add_argument(
         "--select-session",
         action="store_true",
         help="Choose a session from an interactive numbered menu",
@@ -62,9 +57,6 @@ def main(argv: list[str] | None = None) -> int:
     if validation_error is not None:
         print(f"Argument error: {validation_error}", file=sys.stderr)
         return 2
-    if args.list_sessions:
-        return _list_sessions(args.workspace)
-
     session_choice: tuple[Literal["existing", "new"], str | None] | None = None
     if args.select_session:
         try:
@@ -161,10 +153,6 @@ def main(argv: list[str] | None = None) -> int:
 
 
 def _validate_session_arguments(args: argparse.Namespace) -> str | None:
-    if args.list_sessions and args.task is not None:
-        return "--list-sessions does not accept a task"
-    if args.list_sessions and args.title is not None:
-        return "--title cannot be used with --list-sessions"
     if args.select_session and args.title is not None:
         return "--title cannot be used with --select-session"
     if args.title is not None and not args.title.strip():
@@ -172,21 +160,6 @@ def _validate_session_arguments(args: argparse.Namespace) -> str | None:
     if args.title is not None and args.continue_session:
         return "--title can only be used when starting a new session"
     return None
-
-
-def _list_sessions(workspace_value: str) -> int:
-    try:
-        sessions = _open_session_store(workspace_value).list()
-    except (OSError, SessionError, ValueError) as exc:
-        print(f"Session error: {exc}", file=sys.stderr)
-        return 2
-    if not sessions:
-        print("No sessions found for this workspace.")
-        return 0
-    print("UPDATED | TITLE | SESSION ID")
-    for session in sessions:
-        print(f"{_format_timestamp(session.updated_at)} | {session.title} | {session.session_id}")
-    return 0
 
 
 def _prompt_session_choice(
