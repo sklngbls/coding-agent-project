@@ -242,6 +242,16 @@ class SessionStore:
         session.title = self._prepare_title(title, session.messages)
         return self.save(session)
 
+    def delete(self, session_id: str) -> Session:
+        """Delete a persisted session and return the deleted state."""
+
+        session = self.load(session_id)
+        try:
+            self._session_path(session_id).unlink()
+        except OSError as exc:
+            raise SessionError(f"Cannot delete session {session_id}: {exc}") from exc
+        return session
+
     def _session_path(self, session_id: str) -> Path:
         return self.workspace_dir / f"{session_id}.json"
 

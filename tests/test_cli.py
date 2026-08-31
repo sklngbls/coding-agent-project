@@ -375,6 +375,52 @@ def test_cli_selector_can_rename_then_select_session(
     assert loaded.messages[-2]["content"] == "follow-up"
 
 
+def test_cli_deletes_session_without_model_setup(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path.parent / f"{tmp_path.name}-localappdata"))
+    store = SessionStore(tmp_path)
+    session = store.create(title="To delete")
+    store.save(session)
+
+    def fail_model(_settings: object) -> None:
+        raise AssertionError("deleting must not initialize the model")
+
+    monkeypatch.setattr(cli, "OpenAIChatModel", fail_model)
+    inputs = iter(["1", "y"])
+    monkeypatch.setattr("builtins.input", lambda _prompt: next(inputs))
+
+    exit_code = cli.main(["--workspace", str(tmp_path), "--delete-session"])
+
+    assert exit_code == 0
+    assert store.list() == []
+    assert "Session deleted: To delete" in capsys.readouterr().out
+
+
+def test_cli_selector_can_delete_and_cancel_without_model_setup(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path.parent / f"{tmp_path.name}-localappdata"))
+    store = SessionStore(tmp_path)
+    session = store.create(title="Keep this")
+    store.save(session)
+
+    def fail_model(_settings: object) -> None:
+        raise AssertionError("cancelled selection must not initialize the model")
+
+    monkeypatch.setattr(cli, "OpenAIChatModel", fail_model)
+    inputs = iter(["d", "1", "n", "q"])
+    monkeypatch.setattr("builtins.input", lambda _prompt: next(inputs))
+
+    exit_code = cli.main(["--workspace", str(tmp_path), "--select-session"])
+
+    assert exit_code == 0
+    assert store.load(session.session_id).title == "Keep this"
+
+
 def test_cli_selects_numbered_session_and_enters_conversation(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -514,6 +560,15 @@ def test_cli_rejects_task_with_rename_session(capsys: pytest.CaptureFixture[str]
 
     assert exit_code == 2
     assert "--rename-session does not accept a task" in capsys.readouterr().err
+
+
+def test_cli_rejects_task_with_delete_session(capsys: pytest.CaptureFixture[str]) -> None:
+    exit_code = cli.main(
+        ["--workspace", ".", "--delete-session", "task that should be rejected"]
+    )
+
+    assert exit_code == 2
+    assert "--delete-session does not accept a task" in capsys.readouterr().err
 
 
 def test_cli_session_mode_flags_are_mutually_exclusive() -> None:

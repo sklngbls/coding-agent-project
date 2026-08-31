@@ -9,6 +9,7 @@ from coding_agent.sessions import (
     UNTITLED_SESSION_TITLE,
     SessionCorruptError,
     SessionError,
+    SessionNotFoundError,
     SessionStore,
     SessionWorkspaceError,
     make_session_title,
@@ -122,6 +123,19 @@ def test_rename_rejects_empty_title(tmp_path: Path) -> None:
 
     with pytest.raises(SessionError, match="title must not be empty"):
         store.rename(session.session_id, "   ")
+
+
+def test_delete_removes_persisted_session(tmp_path: Path) -> None:
+    store = SessionStore(tmp_path / "workspace", storage_root=tmp_path / "sessions")
+    session = store.create(title="To delete")
+    store.save(session)
+
+    deleted = store.delete(session.session_id)
+
+    assert deleted.title == "To delete"
+    assert store.list() == []
+    with pytest.raises(SessionNotFoundError):
+        store.load(session.session_id)
 
 
 def test_legacy_session_without_title_uses_first_user_message(tmp_path: Path) -> None:

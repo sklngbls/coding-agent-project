@@ -83,6 +83,11 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Rename an existing session from an interactive menu",
     )
+    session_modes.add_argument(
+        "--delete-session",
+        action="store_true",
+        help="Delete an existing session from an interactive menu",
+    )
     parser.add_argument("--title", help="Title for a new or renamed session")
     parser.add_argument("task", nargs="?", help="Natural-language programming task")
     return parser
@@ -109,6 +114,13 @@ def main(argv: list[str] | None = None) -> int:
         except (OSError, SessionError, ValueError) as exc:
             print(f"Session error: {exc}", file=sys.stderr)
             return 2
+    if args.delete_session:
+        _remember_workspace(workspace)
+        try:
+            return _delete_session_interactively(str(workspace), skip_confirmation=args.yes)
+        except (OSError, SessionError, ValueError) as exc:
+            print(f"Session error: {exc}", file=sys.stderr)
+            return 2
     session_choice: tuple[Literal["existing", "new"], str | None] | None = None
     choose_session = args.select_session or (
         args.workspace is None
@@ -116,11 +128,12 @@ def main(argv: list[str] | None = None) -> int:
         and not args.continue_session
         and not args.new_session
         and not args.rename_session
+        and not args.delete_session
         and args.title is None
     )
     if choose_session:
         try:
-            selected = _prompt_session_choice(str(workspace))
+            selected = _prompt_session_choice(str(workspace), skip_confirmation=args.yes)
         except (OSError, SessionError, ValueError) as exc:
             print(f"Session error: {exc}", file=sys.stderr)
             return 2
@@ -242,6 +255,10 @@ def _validate_session_arguments(args: argparse.Namespace) -> str | None:
         return "--title can only be used when starting a new session"
     if args.rename_session and args.task is not None:
         return "--rename-session does not accept a task; use --title for the new name"
+    if args.delete_session and args.title is not None:
+        return "--title cannot be used with --delete-session"
+    if args.delete_session and args.task is not None:
+        return "--delete-session does not accept a task"
     return None
 
 
@@ -332,6 +349,8 @@ def _remember_workspace(workspace: Path) -> None:
 
 def _prompt_session_choice(
     workspace_value: str,
+    *,
+    skip_confirmation: bool = False,
 ) -> tuple[Literal["existing", "new"], str | None] | None:
     store = _open_session_store(workspace_value)
 
@@ -353,6 +372,12 @@ def _prompt_session_choice(
                 print("No existing sessions to rename.")
                 continue
             _prompt_session_rename(store)
+            continue
+        if value in {"d", "delete", "remove"}:
+            if not sessions:
+                print("No existing sessions to delete.")
+                continue
+            _prompt_session_delete(store, skip_confirmation=skip_confirmation)
             continue
         try:
             index = int(value)
@@ -382,6 +407,7 @@ def _print_session_selection_menu(sessions: list[Session]) -> None:
     print()
     print("[0] Start a new session")
     print("[r] Rename a session")
+    print("[d] Delete a session")
     print("[q] Cancel")
 
 
@@ -389,6 +415,12 @@ def _rename_session_interactively(workspace_value: str, title: str | None) -> in
     store = _open_session_store(workspace_value)
     if _prompt_session_rename(store, title=title):
         return 0
+    return 0
+
+
+def _delete_session_interactively(workspace_value: str, *, skip_confirmation: bool) -> int:
+    store = _open_session_store(workspace_value)
+    _prompt_session_delete(store, skip_confirmation=skip_confirmation)
     return 0
 
 
@@ -436,6 +468,50 @@ def _prompt_session_rename(store: SessionStore, *, title: str | None = None) -> 
     previous_title = selected.title
     renamed = store.rename(selected.session_id, new_title)
     print(f"Session renamed: {previous_title} -> {renamed.title}")
+    return True
+
+
+def _prompt_session_delete(store: SessionStore, *, skip_confirmation: bool = False) -> bool:
+    sessions = store.list()
+    _print_menu_header("Delete session")
+    for index, session in enumerate(sessions, start=1):
+        print(f"[{index}] {session.title}")
+    if not sessions:
+        print("No existing sessions for this workspace.")
+        return False
+    print("[q] Cancel")
+
+    while True:
+        print()
+        try:
+            value = input("Session to delete: ").strip().casefold()
+        except (EOFError, KeyboardInterrupt):
+            print("")
+            return False
+        if not value or value in {"q", "quit", "exit"}:
+            return False
+        try:
+            index = int(value)
+        except ValueError:
+            index = -1
+        if 1 <= index <= len(sessions):
+            selected = sessions[index - 1]
+            break
+        print(f"Invalid selection. Enter 1-{len(sessions)} or q to cancel.")
+
+    if not skip_confirmation:
+        try:
+            answer = input(
+                f'Delete session "{selected.title}" and its entire conversation? [y/N]: '
+            ).strip().casefold()
+        except (EOFError, KeyboardInterrupt):
+            print("")
+            return False
+        if answer not in {"y", "yes"}:
+            print("Deletion cancelled.")
+            return False
+    deleted = store.delete(selected.session_id)
+    print(f"Session deleted: {deleted.title}")
     return True
 
 

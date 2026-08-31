@@ -136,12 +136,19 @@ coding-agent --workspace C:\path\to\project --rename-session
 # 也可以直接提供新标题，省略标题输入步骤
 coding-agent --workspace C:\path\to\project --rename-session --title "新的会话名称"
 
+# 删除已有会话；随后按编号选择会话并确认
+coding-agent --workspace C:\path\to\project --delete-session
+
+# 自动化删除时跳过确认
+coding-agent --workspace C:\path\to\project --delete-session --yes
+
 ```
 
 `--select-session` 会按最近更新时间列出会话标题。输入会话前的编号即可进入连续交互，输入
-`0` 新建会话，输入 `r` 重命名已有会话，输入空行、`q`、`quit`、`exit` 或 EOF 取消。也可以在
-选择命令末尾附带一个任务，选择后只执行该任务并退出。`--rename-session` 只操作本地会话文件，
-不需要初始化模型；使用该命令时，按编号选择会话后输入新标题即可。
+`0` 新建会话，输入 `r` 重命名已有会话，输入 `d` 删除已有会话，输入空行、`q`、`quit`、`exit`
+或 EOF 取消。也可以在选择命令末尾附带一个任务，选择后只执行该任务并退出。
+`--rename-session` 和 `--delete-session` 只操作本地会话文件，不需要初始化模型；使用删除命令时，
+按编号选择会话后还需要确认，除非同时使用 `--yes`。
 
 会话按规范化工作区路径的 SHA-256 前缀分目录保存。Windows 默认位置为
 `%LOCALAPPDATA%\coding-agent\sessions`；其他平台优先使用 `$XDG_DATA_HOME`，否则回退到
