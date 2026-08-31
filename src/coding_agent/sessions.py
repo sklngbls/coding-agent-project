@@ -46,6 +46,7 @@ class Session:
     created_at: str
     updated_at: str
     messages: list[dict[str, Any]]
+    summary: str | None = None
 
 
 MessageHistory = list[dict[str, Any]]
@@ -54,6 +55,7 @@ SessionList = list[Session]
 
 _SESSION_ID = re.compile(r"[0-9a-f]{32}\Z")
 _MAX_TITLE_CHARS = 60
+_MAX_SUMMARY_CHARS = 8_000
 UNTITLED_SESSION_TITLE = "Untitled session"
 
 
@@ -127,6 +129,7 @@ class SessionStore:
         messages: MessageHistory | None = None,
         *,
         title: str | None = None,
+        summary: str | None = None,
     ) -> Session:
         """Create an unsaved session with a fresh ID and current timestamps."""
 
@@ -139,6 +142,7 @@ class SessionStore:
             created_at=now,
             updated_at=now,
             messages=prepared_messages,
+            summary=self._prepare_summary(summary),
         )
 
     def save(self, session: Session) -> Session:
@@ -154,6 +158,7 @@ class SessionStore:
             created_at = _validate_timestamp(session.created_at, "created_at")
             messages = self._prepare_messages(session.messages)
             title = self._prepare_title(session.title, messages)
+            summary = self._prepare_summary(session.summary)
             updated_at = _utc_now()
             payload = {
                 "session_id": session.session_id,
@@ -162,6 +167,7 @@ class SessionStore:
                 "created_at": created_at,
                 "updated_at": updated_at,
                 "messages": messages,
+                "summary": summary,
             }
             encoded = json.dumps(payload, ensure_ascii=False, indent=2) + "\n"
         except (TypeError, ValueError) as exc:
@@ -200,6 +206,7 @@ class SessionStore:
         session.created_at = created_at
         session.updated_at = updated_at
         session.messages = messages
+        session.summary = summary
         return session
 
     def load(self, session_id: str) -> Session:
@@ -276,6 +283,9 @@ class SessionStore:
             raw_title = payload.get("title")
             if raw_title is not None and not isinstance(raw_title, str):
                 raise ValueError("title must be a string")
+            raw_summary = payload.get("summary")
+            if raw_summary is not None and not isinstance(raw_summary, str):
+                raise ValueError("summary must be a string")
         except (KeyError, TypeError, ValueError) as exc:
             raise SessionCorruptError(f"Invalid session file {path}: {exc}") from exc
         if _SESSION_ID.fullmatch(session_id) is None:
@@ -294,6 +304,7 @@ class SessionStore:
             created_at=created_at,
             updated_at=updated_at,
             messages=self._prepare_messages(messages),
+            summary=self._prepare_summary(raw_summary),
         )
 
     def _find_session_elsewhere(self, session_id: str) -> Path | None:
@@ -316,6 +327,19 @@ class SessionStore:
         candidate = title if title and title.strip() else _first_user_message(messages)
         redacted = _redact_value(candidate, self.api_key)
         return make_session_title(redacted if isinstance(redacted, str) else None)
+
+    def _prepare_summary(self, summary: str | None) -> str | None:
+        if summary is None:
+            return None
+        if not isinstance(summary, str):
+            raise ValueError("summary must be a string")
+        redacted = _redact_value(summary, self.api_key)
+        if not isinstance(redacted, str):
+            return None
+        normalized = redacted.strip()
+        if not normalized:
+            return None
+        return normalized[:_MAX_SUMMARY_CHARS]
 
     @staticmethod
     def _validate_session_id(session_id: str) -> None:

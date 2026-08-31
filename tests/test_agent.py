@@ -28,6 +28,7 @@ def build_agent(
     responses: list[ModelResponse],
     *,
     max_steps: int = 10,
+    max_history_tokens: int = 12_000,
     events: list[ProgressEvent] | None = None,
 ) -> tuple[CodingAgent, FakeModel]:
     model = FakeModel(responses)
@@ -39,6 +40,7 @@ def build_agent(
             registry,
             workspace=tmp_path,
             max_steps=max_steps,
+            max_history_tokens=max_history_tokens,
             on_progress=callback,
         ),
         model,
@@ -264,3 +266,28 @@ def test_history_limit_does_not_split_tool_call_round(tmp_path: Path) -> None:
     assert [message["role"] for message in sent] == ["system", "user", "user"]
     assert sent[-2]["content"] == "current task"
     assert sent[-1]["content"] == "latest task"
+
+
+def test_long_history_generates_summary_before_regular_model_call(tmp_path: Path) -> None:
+    history: list[dict[str, Any]] = [
+        {"role": "system", "content": "system"},
+        {"role": "user", "content": "old task " + "x" * 500},
+        {"role": "assistant", "content": "old answer " + "x" * 500},
+        {"role": "user", "content": "recent task"},
+    ]
+    agent, model = build_agent(
+        tmp_path,
+        [ModelResponse(content="Condensed project history."), ModelResponse(content="done")],
+        max_history_tokens=500,
+    )
+
+    result = agent.run("latest task", history=history)
+
+    assert result.status == "completed"
+    assert result.summary == "Condensed project history."
+    assert len(model.calls) == 2
+    summary_call, regular_call = model.calls
+    assert summary_call[1] == []
+    assert "Summarize an earlier coding-agent conversation" in summary_call[0][0]["content"]
+    assert "Conversation summary for earlier turns" in regular_call[0][0]["content"]
+    assert regular_call[0][-1]["content"] == "latest task"

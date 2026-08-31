@@ -57,6 +57,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--max-steps", type=int, default=20)
     parser.add_argument("--command-timeout", type=float, default=20.0)
     parser.add_argument(
+        "--max-history-tokens",
+        type=int,
+        default=12_000,
+        help="Approximate token budget for messages sent to the model",
+    )
+    parser.add_argument(
         "--yes",
         action="store_true",
         help="Skip confirmation prompts for file changes and commands",
@@ -146,6 +152,7 @@ def main(argv: list[str] | None = None) -> int:
             workspace,
             max_steps=args.max_steps,
             command_timeout=args.command_timeout,
+            max_history_tokens=args.max_history_tokens,
         )
     except ConfigurationError as exc:
         print(f"Configuration error: {exc}", file=sys.stderr)
@@ -181,6 +188,7 @@ def main(argv: list[str] | None = None) -> int:
         registry,
         workspace=settings.workspace,
         max_steps=settings.max_steps,
+        max_history_tokens=settings.max_history_tokens,
         on_progress=_print_progress,
     )
 
@@ -640,8 +648,13 @@ def _run_and_save(
         message.get("role") == "user" for message in session.messages
     ):
         session.title = make_session_title(task)
-    result = agent.run(task, history=session.messages if continuing else None)
+    result = agent.run(
+        task,
+        history=session.messages if continuing else None,
+        summary=session.summary if continuing else None,
+    )
     session.messages = result.messages
+    session.summary = result.summary
     print("\nAgent:\n" + _redact(result.final_answer, api_key))
     print(_TURN_DIVIDER)
     try:

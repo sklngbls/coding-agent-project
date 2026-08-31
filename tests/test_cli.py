@@ -330,6 +330,34 @@ def test_cli_manual_title_is_saved(
     assert recent.title == "Session management"
 
 
+def test_cli_persists_generated_summary_when_continuing(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    configure_environment(monkeypatch, tmp_path)
+    store = SessionStore(tmp_path)
+    session = store.create(
+        [
+            {"role": "user", "content": "old task " + "x" * 500},
+            {"role": "assistant", "content": "old answer " + "x" * 500},
+        ],
+        title="Long conversation",
+    )
+    store.save(session)
+    model = FakeModel(
+        [ModelResponse(content="Persisted project summary."), ModelResponse(content="done")]
+    )
+    monkeypatch.setattr(cli, "OpenAIChatModel", lambda settings: model)
+
+    exit_code = cli.main(
+        ["--workspace", str(tmp_path), "--continue", "--max-history-tokens", "500", "next task"]
+    )
+
+    assert exit_code == 0
+    loaded = store.load(session.session_id)
+    assert loaded.summary == "Persisted project summary."
+
+
 def test_cli_renames_session_without_model_setup(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

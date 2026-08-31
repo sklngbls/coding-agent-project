@@ -80,6 +80,7 @@ class Settings:
     max_steps: int = 20
     command_timeout: float = 20.0
     max_output_chars: int = 20_000
+    max_history_tokens: int = 12_000
 
     @classmethod
     def from_environment(
@@ -89,6 +90,7 @@ class Settings:
         max_steps: int = 20,
         command_timeout: float = 20.0,
         max_output_chars: int = 20_000,
+        max_history_tokens: int = 12_000,
     ) -> Settings:
         file_values = _load_environment_values(workspace)
         values = {
@@ -106,6 +108,8 @@ class Settings:
             raise ConfigurationError("command_timeout must be greater than 0")
         if max_output_chars < 1:
             raise ConfigurationError("max_output_chars must be at least 1")
+        if max_history_tokens < 1:
+            raise ConfigurationError("max_history_tokens must be at least 1")
         return cls(
             workspace=Path(workspace).expanduser().resolve(),
             api_key=values["LLM_API_KEY"],
@@ -114,4 +118,5 @@ class Settings:
             max_steps=max_steps,
             command_timeout=command_timeout,
             max_output_chars=max_output_chars,
+            max_history_tokens=max_history_tokens,
         )

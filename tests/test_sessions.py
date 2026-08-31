@@ -81,6 +81,7 @@ def test_save_is_atomic_and_redacts_api_key_recursively(tmp_path: Path) -> None:
             },
         ],
         title=f"title={secret}",
+        summary=f"summary={secret}",
     )
     store.save(session)
 
@@ -90,6 +91,17 @@ def test_save_is_atomic_and_redacts_api_key_recursively(tmp_path: Path) -> None:
     assert "[redacted]" in raw
     assert not list(store.workspace_dir.glob(".*.tmp"))
     assert session.title == "title=[redacted]"
+    assert session.summary == "summary=[redacted]"
+
+
+def test_summary_round_trips_for_legacy_and_new_sessions(tmp_path: Path) -> None:
+    store = SessionStore(tmp_path / "workspace", storage_root=tmp_path / "sessions")
+    session = store.create(title="With summary", summary="Important project facts")
+    store.save(session)
+
+    loaded = store.load(session.session_id)
+
+    assert loaded.summary == "Important project facts"
 
 
 def test_title_is_generated_from_first_user_message_and_normalized(tmp_path: Path) -> None:

@@ -95,6 +95,7 @@ def test_settings_report_all_missing_variables(
         ({"max_steps": 0}, "max_steps"),
         ({"command_timeout": 0}, "command_timeout"),
         ({"max_output_chars": 0}, "max_output_chars"),
+        ({"max_history_tokens": 0}, "max_history_tokens"),
     ],
 )
 def test_settings_validate_limits(

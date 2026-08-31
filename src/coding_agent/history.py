@@ -2,9 +2,68 @@
 
 from __future__ import annotations
 
+import json
+import math
 from typing import Any
 
 Message = dict[str, Any]
+
+
+def estimate_tokens(value: Any) -> int:
+    """Conservatively estimate token usage without a provider-specific tokenizer.
+
+    ASCII characters are counted at roughly two characters per token, while
+    non-ASCII characters are counted at one character per token. The estimate is
+    only used to decide when to trim context, not for billing or exact usage
+    reporting.
+    """
+
+    if isinstance(value, str):
+        text = value
+    else:
+        text = json.dumps(value, ensure_ascii=False, separators=(",", ":"), default=str)
+    if not text:
+        return 0
+    ascii_characters = sum(character.isascii() for character in text)
+    non_ascii_characters = len(text) - ascii_characters
+    return max(1, math.ceil(ascii_characters / 2) + non_ascii_characters)
+
+
+def truncate_messages_by_tokens(messages: list[Message], limit: int) -> list[Message]:
+    """Keep the newest complete message sequence within an estimated token limit."""
+
+    _, retained = split_messages_by_tokens(messages, limit)
+    return retained
+
+
+def split_messages_by_tokens(
+    messages: list[Message], limit: int
+) -> tuple[list[Message], list[Message]]:
+    """Return messages discarded before a valid suffix and the retained suffix."""
+
+    if limit < 1:
+        raise ValueError("token limit must be at least 1")
+    if estimate_tokens(messages) <= limit:
+        return [], messages
+
+    system: Message | None = None
+    body = messages
+    if messages and messages[0].get("role") == "system":
+        system = messages[0]
+        body = messages[1:]
+
+    for start in range(len(body)):
+        candidate = body[start:]
+        if _is_complete_sequence(candidate):
+            selected = ([system] if system is not None else []) + candidate
+            if estimate_tokens(selected) <= limit:
+                return body[:start], selected
+
+    for index in range(len(body) - 1, -1, -1):
+        message = body[index]
+        if message.get("role") == "user":
+            return body[:index], ([system] if system is not None else []) + [message]
+    return body, [system] if system is not None else []
 
 
 def truncate_messages(messages: list[Message], limit: int) -> list[Message]:
