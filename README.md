@@ -53,12 +53,21 @@ python -m pip install -e .
 macOS / Linux 激活命令为 `source .venv/bin/activate`。
 参与开发或运行测试时改用 `python -m pip install -e ".[dev]"` 安装检查工具。
 
-项目只从以下环境变量读取模型配置，不会自动读取 `.env` 文件：
+项目支持从当前目录或工作区的 `.env` 文件读取模型配置。系统环境变量优先于 `.env` 文件；
+如果当前目录和工作区都存在 `.env`，工作区文件优先：
 
 ```powershell
 $env:LLM_API_KEY="<your-api-key>"
 $env:LLM_BASE_URL="https://<provider-host>/v1"
 $env:LLM_MODEL="<provider-model-name>"
+```
+
+也可以将同样的变量写入当前目录或工作区的 `.env` 文件：
+
+```dotenv
+LLM_API_KEY=<your-api-key>
+LLM_BASE_URL=https://<provider-host>/v1
+LLM_MODEL=<provider-model-name>
 ```
 
 `.env.example` 仅列出变量名和占位值，可以作为配置清单；不要把真实凭据写入仓库。
