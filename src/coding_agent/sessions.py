@@ -233,6 +233,15 @@ class SessionStore:
         sessions = self.list()
         return sessions[0] if sessions else None
 
+    def rename(self, session_id: str, title: str) -> Session:
+        """Rename a persisted session and return its updated state."""
+
+        if not isinstance(title, str) or not title.strip():
+            raise SessionError("title must not be empty")
+        session = self.load(session_id)
+        session.title = self._prepare_title(title, session.messages)
+        return self.save(session)
+
     def _session_path(self, session_id: str) -> Path:
         return self.workspace_dir / f"{session_id}.json"
 

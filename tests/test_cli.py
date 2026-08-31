@@ -219,7 +219,7 @@ def test_cli_without_workspace_can_cancel_before_configuration(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "localappdata"))
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path.parent / f"{tmp_path.name}-localappdata"))
     for name in ("LLM_API_KEY", "LLM_BASE_URL", "LLM_MODEL"):
         monkeypatch.delenv(name, raising=False)
     monkeypatch.setattr("builtins.input", lambda _prompt: "q")
@@ -328,6 +328,51 @@ def test_cli_manual_title_is_saved(
     recent = SessionStore(tmp_path).get_recent()
     assert recent is not None
     assert recent.title == "Session management"
+
+
+def test_cli_renames_session_without_model_setup(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path.parent / f"{tmp_path.name}-localappdata"))
+    store = SessionStore(tmp_path)
+    session = store.create(title="Old title")
+    store.save(session)
+
+    def fail_model(_settings: object) -> None:
+        raise AssertionError("renaming must not initialize the model")
+
+    monkeypatch.setattr(cli, "OpenAIChatModel", fail_model)
+    inputs = iter(["1", "New title"])
+    monkeypatch.setattr("builtins.input", lambda _prompt: next(inputs))
+
+    exit_code = cli.main(["--workspace", str(tmp_path), "--rename-session"])
+
+    assert exit_code == 0
+    assert store.load(session.session_id).title == "New title"
+    assert "Session renamed: Old title -> New title" in capsys.readouterr().out
+
+
+def test_cli_selector_can_rename_then_select_session(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    configure_environment(monkeypatch, tmp_path)
+    store = SessionStore(tmp_path)
+    session = store.create(title="Old title")
+    store.save(session)
+    model = FakeModel([ModelResponse(content="done")])
+    monkeypatch.setattr(cli, "OpenAIChatModel", lambda settings: model)
+    inputs = iter(["r", "1", "Renamed", "1", "follow-up", "quit"])
+    monkeypatch.setattr("builtins.input", lambda _prompt: next(inputs))
+
+    exit_code = cli.main(["--workspace", str(tmp_path), "--select-session"])
+
+    assert exit_code == 0
+    loaded = store.load(session.session_id)
+    assert loaded.title == "Renamed"
+    assert loaded.messages[-2]["content"] == "follow-up"
 
 
 def test_cli_selects_numbered_session_and_enters_conversation(
@@ -460,6 +505,15 @@ def test_cli_rejects_title_when_continuing(
 
     assert exit_code == 2
     assert "--title can only be used" in capsys.readouterr().err
+
+
+def test_cli_rejects_task_with_rename_session(capsys: pytest.CaptureFixture[str]) -> None:
+    exit_code = cli.main(
+        ["--workspace", ".", "--rename-session", "task that should be rejected"]
+    )
+
+    assert exit_code == 2
+    assert "--rename-session does not accept a task" in capsys.readouterr().err
 
 
 def test_cli_session_mode_flags_are_mutually_exclusive() -> None:

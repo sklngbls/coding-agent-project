@@ -104,6 +104,26 @@ def test_title_is_generated_from_first_user_message_and_normalized(tmp_path: Pat
     assert make_session_title("x" * 100).endswith("...")
 
 
+def test_rename_updates_persisted_title(tmp_path: Path) -> None:
+    store = SessionStore(tmp_path / "workspace", storage_root=tmp_path / "sessions")
+    session = store.create([{"role": "user", "content": "Original task"}], title="Old title")
+    store.save(session)
+
+    renamed = store.rename(session.session_id, "  New   title  ")
+
+    assert renamed.title == "New title"
+    assert store.load(session.session_id).title == "New title"
+
+
+def test_rename_rejects_empty_title(tmp_path: Path) -> None:
+    store = SessionStore(tmp_path / "workspace", storage_root=tmp_path / "sessions")
+    session = store.create(title="Existing")
+    store.save(session)
+
+    with pytest.raises(SessionError, match="title must not be empty"):
+        store.rename(session.session_id, "   ")
+
+
 def test_legacy_session_without_title_uses_first_user_message(tmp_path: Path) -> None:
     store = SessionStore(tmp_path / "workspace", storage_root=tmp_path / "sessions")
     session = store.create([{"role": "user", "content": "Legacy task title"}])

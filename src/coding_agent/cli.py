@@ -78,7 +78,12 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Choose a session from an interactive numbered menu",
     )
-    parser.add_argument("--title", help="Title for a new session")
+    session_modes.add_argument(
+        "--rename-session",
+        action="store_true",
+        help="Rename an existing session from an interactive menu",
+    )
+    parser.add_argument("--title", help="Title for a new or renamed session")
     parser.add_argument("task", nargs="?", help="Natural-language programming task")
     return parser
 
@@ -97,12 +102,20 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     if workspace is None:
         return 0
+    if args.rename_session:
+        _remember_workspace(workspace)
+        try:
+            return _rename_session_interactively(str(workspace), args.title)
+        except (OSError, SessionError, ValueError) as exc:
+            print(f"Session error: {exc}", file=sys.stderr)
+            return 2
     session_choice: tuple[Literal["existing", "new"], str | None] | None = None
     choose_session = args.select_session or (
         args.workspace is None
         and args.task is None
         and not args.continue_session
         and not args.new_session
+        and not args.rename_session
         and args.title is None
     )
     if choose_session:
@@ -227,6 +240,8 @@ def _validate_session_arguments(args: argparse.Namespace) -> str | None:
         return "--title must not be empty"
     if args.title is not None and args.continue_session:
         return "--title can only be used when starting a new session"
+    if args.rename_session and args.task is not None:
+        return "--rename-session does not accept a task; use --title for the new name"
     return None
 
 
@@ -318,8 +333,37 @@ def _remember_workspace(workspace: Path) -> None:
 def _prompt_session_choice(
     workspace_value: str,
 ) -> tuple[Literal["existing", "new"], str | None] | None:
-    sessions = _open_session_store(workspace_value).list()
+    store = _open_session_store(workspace_value)
 
+    while True:
+        sessions = store.list()
+        _print_session_selection_menu(sessions)
+        print()
+        try:
+            value = input("Selection: ").strip().casefold()
+        except (EOFError, KeyboardInterrupt):
+            print("")
+            return None
+        if not value or value in {"q", "quit", "exit"}:
+            return None
+        if value in {"0", "n", "new"}:
+            return "new", None
+        if value in {"r", "rename"}:
+            if not sessions:
+                print("No existing sessions to rename.")
+                continue
+            _prompt_session_rename(store)
+            continue
+        try:
+            index = int(value)
+        except ValueError:
+            index = -1
+        if 1 <= index <= len(sessions):
+            return "existing", sessions[index - 1].session_id
+        print(f"Invalid selection. Enter 0-{len(sessions)} or q to cancel.")
+
+
+def _print_session_selection_menu(sessions: list[Session]) -> None:
     _print_menu_header("Session selection")
     for index, session in enumerate(sessions, start=1):
         print(f"[{index}] {session.title}")
@@ -337,26 +381,62 @@ def _prompt_session_choice(
         print("No existing sessions for this workspace.")
     print()
     print("[0] Start a new session")
+    print("[r] Rename a session")
+    print("[q] Cancel")
+
+
+def _rename_session_interactively(workspace_value: str, title: str | None) -> int:
+    store = _open_session_store(workspace_value)
+    if _prompt_session_rename(store, title=title):
+        return 0
+    return 0
+
+
+def _prompt_session_rename(store: SessionStore, *, title: str | None = None) -> bool:
+    sessions = store.list()
+    _print_menu_header("Rename session")
+    for index, session in enumerate(sessions, start=1):
+        print(f"[{index}] {session.title}")
+    if not sessions:
+        print("No existing sessions for this workspace.")
+        return False
     print("[q] Cancel")
 
     while True:
         print()
         try:
-            value = input("Selection: ").strip().casefold()
+            value = input("Session to rename: ").strip().casefold()
         except (EOFError, KeyboardInterrupt):
             print("")
-            return None
+            return False
         if not value or value in {"q", "quit", "exit"}:
-            return None
-        if value in {"0", "n", "new"}:
-            return "new", None
+            return False
         try:
             index = int(value)
         except ValueError:
             index = -1
         if 1 <= index <= len(sessions):
-            return "existing", sessions[index - 1].session_id
-        print(f"Invalid selection. Enter 0-{len(sessions)} or q to cancel.")
+            selected = sessions[index - 1]
+            break
+        print(f"Invalid selection. Enter 1-{len(sessions)} or q to cancel.")
+
+    provided_title = title is not None
+    new_title = title
+    if new_title is None:
+        try:
+            new_title = input("New title: ").strip()
+        except (EOFError, KeyboardInterrupt):
+            print("")
+            return False
+    if not new_title or (
+        not provided_title and new_title.casefold() in {"q", "quit", "exit"}
+    ):
+        print("Rename cancelled.")
+        return False
+    previous_title = selected.title
+    renamed = store.rename(selected.session_id, new_title)
+    print(f"Session renamed: {previous_title} -> {renamed.title}")
+    return True
 
 
 def _print_menu_header(title: str) -> None:
