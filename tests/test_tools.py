@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
+import subprocess
 import sys
 from pathlib import Path
 
@@ -43,6 +45,136 @@ def test_file_write_read_replace_and_list(registry: ToolRegistry, tmp_path: Path
     listing = result_payload(registry, "list_files", {"path": ".", "recursive": True})
     assert "src/" in listing["data"]["entries"]
     assert "src/hello.txt" in listing["data"]["entries"]
+
+
+def test_file_write_requires_confirmation_and_shows_diff(tmp_path: Path) -> None:
+    target = tmp_path / "hello.txt"
+    target.write_text("before\n", encoding="utf-8")
+    requests: list[tuple[str, str, str]] = []
+
+    def deny(operation: str, path: str, preview: str) -> bool:
+        requests.append((operation, path, preview))
+        return False
+
+    registry = ToolRegistry(
+        LocalTools(tmp_path, confirm_action=deny).definitions()
+    )
+    result = result_payload(
+        registry,
+        "write_file",
+        {"path": "hello.txt", "content": "after\n"},
+    )
+
+    assert result["ok"] is False
+    assert "rejected" in result["message"]
+    assert target.read_text(encoding="utf-8") == "before\n"
+    assert requests[0][0:2] == ("write_file", "hello.txt")
+    assert "-before" in requests[0][2]
+    assert "+after" in requests[0][2]
+
+
+def test_file_diff_preview_is_limited(tmp_path: Path) -> None:
+    preview_sizes: list[int] = []
+
+    def deny(_operation: str, _path: str, preview: str) -> bool:
+        preview_sizes.append(len(preview))
+        return False
+
+    registry = ToolRegistry(
+        LocalTools(tmp_path, max_output_chars=120, confirm_action=deny).definitions()
+    )
+    result = result_payload(
+        registry,
+        "write_file",
+        {"path": "large.txt", "content": "x" * 1_000},
+    )
+
+    assert result["ok"] is False
+    assert preview_sizes == [120]
+
+
+def test_replace_text_requires_confirmation(tmp_path: Path) -> None:
+    target = tmp_path / "hello.txt"
+    target.write_text("before\n", encoding="utf-8")
+    requests: list[str] = []
+
+    def allow(operation: str, _path: str, _preview: str) -> bool:
+        requests.append(operation)
+        return True
+
+    registry = ToolRegistry(
+        LocalTools(tmp_path, confirm_action=allow).definitions()
+    )
+
+    result = result_payload(
+        registry,
+        "replace_text",
+        {"path": "hello.txt", "old_text": "before", "new_text": "after"},
+    )
+
+    assert result["ok"] is True
+    assert requests == ["replace_text"]
+    assert target.read_text(encoding="utf-8") == "after\n"
+
+
+def test_command_requires_confirmation_and_is_not_started_when_rejected(
+    tmp_path: Path,
+) -> None:
+    registry = ToolRegistry(
+        LocalTools(
+            tmp_path,
+            confirm_action=lambda _operation, _target, _preview: False,
+        ).definitions()
+    )
+    result = result_payload(
+        registry,
+        "run_command",
+        {
+            "argv": [
+                sys.executable,
+                "-c",
+                "from pathlib import Path; Path('ran.txt').write_text('bad')",
+            ]
+        },
+    )
+
+    assert result["ok"] is False
+    assert "rejected" in result["message"]
+    assert not (tmp_path / "ran.txt").exists()
+
+
+def test_git_checkpoint_is_created_without_changing_worktree(tmp_path: Path) -> None:
+    git = shutil.which("git")
+    if git is None:
+        pytest.skip("git is not installed")
+    subprocess.run([git, "init", "-q", str(tmp_path)], check=True)
+    subprocess.run(
+        [git, "-C", str(tmp_path), "config", "user.email", "test@example.invalid"],
+        check=True,
+    )
+    subprocess.run(
+        [git, "-C", str(tmp_path), "config", "user.name", "Coding Agent Test"],
+        check=True,
+    )
+    target = tmp_path / "hello.txt"
+    target.write_text("before\n", encoding="utf-8")
+    subprocess.run([git, "-C", str(tmp_path), "add", "hello.txt"], check=True)
+    subprocess.run([git, "-C", str(tmp_path), "commit", "-qm", "baseline"], check=True)
+    target.write_text("local change\n", encoding="utf-8")
+
+    registry = ToolRegistry(LocalTools(tmp_path).definitions())
+    result = result_payload(
+        registry,
+        "write_file",
+        {"path": "new.txt", "content": "agent\n"},
+    )
+
+    assert result["ok"] is True
+    checkpoint = result["data"]["checkpoint"]
+    assert checkpoint["available"] is True
+    assert checkpoint["reference"]
+    assert target.read_text(encoding="utf-8") == "local change\n"
+    assert (tmp_path / "new.txt").read_text(encoding="utf-8") == "agent\n"
 
 
 @pytest.mark.parametrize("path", ["../secret.txt", "folder/../../secret.txt"])

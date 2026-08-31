@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 
 from coding_agent import cli
-from coding_agent.llm import ModelResponse
+from coding_agent.llm import ModelResponse, ToolCall
 from coding_agent.sessions import SessionStore
 from coding_agent.workspaces import WorkspaceStore
 
@@ -69,6 +69,67 @@ def test_cli_workspace_is_optional() -> None:
     args = cli.build_parser().parse_args([])
 
     assert args.workspace is None
+    assert args.yes is False
+
+
+def test_cli_yes_flag_skips_operation_confirmation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    configure_environment(monkeypatch, tmp_path)
+    fake = FakeModel(
+        [
+            ModelResponse(
+                tool_calls=[
+                    ToolCall(
+                        id="write-1",
+                        name="write_file",
+                        arguments='{"path":"created.txt","content":"created"}',
+                    )
+                ]
+            ),
+            ModelResponse(content="done"),
+        ]
+    )
+    monkeypatch.setattr(cli, "OpenAIChatModel", lambda settings: fake)
+
+    def fail_input(_prompt: str) -> str:
+        raise AssertionError("--yes should not request confirmation")
+
+    monkeypatch.setattr("builtins.input", fail_input)
+
+    assert cli.main(["--yes", "--workspace", str(tmp_path), "Create a file"]) == 0
+    assert (tmp_path / "created.txt").read_text(encoding="utf-8") == "created"
+
+
+def test_cli_prompts_before_file_write(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    configure_environment(monkeypatch, tmp_path)
+    fake = FakeModel(
+        [
+            ModelResponse(
+                tool_calls=[
+                    ToolCall(
+                        id="write-1",
+                        name="write_file",
+                        arguments='{"path":"created.txt","content":"created"}',
+                    )
+                ]
+            ),
+            ModelResponse(content="The write was not approved."),
+        ]
+    )
+    monkeypatch.setattr(cli, "OpenAIChatModel", lambda settings: fake)
+    monkeypatch.setattr("builtins.input", lambda _prompt: "n")
+
+    assert cli.main(["--workspace", str(tmp_path), "Create a file"]) == 0
+    captured = capsys.readouterr()
+    assert "[approval required] write_file: created.txt" in captured.err
+    assert "The write was not approved." in captured.out
+    assert not (tmp_path / "created.txt").exists()
 
 
 def test_xx_main_accepts_code_alias(monkeypatch: pytest.MonkeyPatch) -> None:

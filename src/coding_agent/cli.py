@@ -56,6 +56,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--max-steps", type=int, default=20)
     parser.add_argument("--command-timeout", type=float, default=20.0)
+    parser.add_argument(
+        "--yes",
+        action="store_true",
+        help="Skip confirmation prompts for file changes and commands",
+    )
     session_modes = parser.add_mutually_exclusive_group()
     session_modes.add_argument(
         "--continue",
@@ -123,10 +128,21 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         session_store = SessionStore(settings.workspace, api_key=settings.api_key)
+        confirm_action = (
+            None
+            if args.yes
+            else lambda operation, target, preview: _confirm_action(
+                operation,
+                target,
+                preview,
+                settings.api_key,
+            )
+        )
         local_tools = LocalTools(
             settings.workspace,
             command_timeout=settings.command_timeout,
             max_output_chars=settings.max_output_chars,
+            confirm_action=confirm_action,
         )
         registry = ToolRegistry(local_tools.definitions())
         model = OpenAIChatModel(settings)
@@ -499,6 +515,19 @@ def _print_session_status(session: Session, continuing: bool) -> None:
 
 def _redact(value: str, api_key: str) -> str:
     return value.replace(api_key, "[redacted]") if api_key else value
+
+
+def _confirm_action(operation: str, target: str, preview: str, api_key: str) -> bool:
+    print(_TURN_DIVIDER, file=sys.stderr)
+    print(f"[approval required] {operation}: {target}", file=sys.stderr)
+    print(_redact(preview, api_key), file=sys.stderr)
+    print(_TURN_DIVIDER, file=sys.stderr)
+    try:
+        answer = input("Allow this operation? [y/N]: ").strip().casefold()
+    except (EOFError, KeyboardInterrupt):
+        print("", file=sys.stderr)
+        return False
+    return answer in {"y", "yes"}
 
 
 def _print_progress(event: ProgressEvent) -> None:

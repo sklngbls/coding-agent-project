@@ -72,6 +72,13 @@ $env:LLM_MODEL="<provider-model-name>"
 coding-agent --workspace C:\path\to\project "修复解析器的空输入错误并运行测试"
 ```
 
+默认情况下，Agent 在写入文件、替换文本或执行命令前会显示预览并请求确认。
+自动化运行时可以使用 `--yes` 跳过确认：
+
+```powershell
+coding-agent --yes --workspace C:\path\to\project "运行测试并修复失败"
+```
+
 也可以省略 `--workspace`。直接运行下面的命令时，会先从最近使用的工作区中选择，或输入一个新的路径，
 然后再选择会话：
 
@@ -165,7 +172,10 @@ Key 不会写入会话文件。每个会话同时保存标题和唯一 ID；自�
 
 这些限制不是操作系统级沙箱。命令参数本身可以引用工作区外路径，子进程仍拥有当前用户
 的文件和网络权限，并继承除 `LLM_API_KEY` 外的其他环境变量；模型也可能把 shell 程序本身
-作为普通可执行文件调用。`write_file` 会覆盖目标文件，目前也没有逐条操作确认或自动回滚。
+作为普通可执行文件调用。`write_file` 和 `replace_text` 会在执行前显示 unified diff 并请求确认；
+`run_command` 会显示命令、工作目录和超时设置并请求确认。Git 工作区的首次变更前会记录一个
+`refs/coding-agent/checkpoint` checkpoint，不会自动提交或清理已有修改；未提交的未跟踪文件
+不会包含在 Git checkpoint 中。没有 Git 仓库时仍可运行，但不会有该 checkpoint 保护。
 因此只应在可信任务、可备份或受版本控制的工作区中运行，并在运行前清理其他敏感环境变量。
 
 ## 测试与检查
