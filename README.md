@@ -58,7 +58,7 @@ macOS / Linux 激活命令为 `source .venv/bin/activate`。
 
 ```powershell
 $env:LLM_API_KEY="<your-api-key>"
-$env:LLM_BASE_URL="https://<provider-host>/v1"
+$env:LLM_BASE_URL="https://<provider-api-root>"
 $env:LLM_MODEL="<provider-model-name>"
 ```
 
@@ -66,7 +66,7 @@ $env:LLM_MODEL="<provider-model-name>"
 
 ```dotenv
 LLM_API_KEY=<your-api-key>
-LLM_BASE_URL=https://<provider-host>/v1
+LLM_BASE_URL=https://<provider-api-root>
 LLM_MODEL=<provider-model-name>
 ```
 

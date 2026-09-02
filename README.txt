@@ -15,8 +15,9 @@ XX Code 是一个使用 OpenAI 兼容 Chat Completions 接口的轻量编程智�
    python -m pip install -e .
 3. 在项目目录创建未入库的 .env 文件，填写：
    LLM_API_KEY=你的API密钥
-   LLM_BASE_URL=https://服务商地址/v1
+   LLM_BASE_URL=https://服务商提供的API根地址
    LLM_MODEL=模型名称
+   URL 路径以服务商文档为准，可能包含或不包含 /v1。
 4. 启动程序：
    coding-agent --workspace "工作区路径" "要完成的编程任务"
    也可以运行 xx code，按提示选择工作区和会话。
