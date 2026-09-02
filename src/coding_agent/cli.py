@@ -59,7 +59,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--max-history-tokens",
         type=int,
-        default=12_000,
+        default=50_000,
         help="Approximate token budget for messages sent to the model",
     )
     parser.add_argument(

@@ -28,7 +28,7 @@ def build_agent(
     responses: list[ModelResponse],
     *,
     max_steps: int = 10,
-    max_history_tokens: int = 12_000,
+    max_history_tokens: int = 50_000,
     events: list[ProgressEvent] | None = None,
 ) -> tuple[CodingAgent, FakeModel]:
     model = FakeModel(responses)

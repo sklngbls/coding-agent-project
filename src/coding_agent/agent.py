@@ -76,7 +76,7 @@ class CodingAgent:
         workspace: str | Path,
         max_steps: int = 20,
         max_history_messages: int = 100,
-        max_history_tokens: int = 12_000,
+        max_history_tokens: int = 50_000,
         on_progress: ProgressCallback | None = None,
     ) -> None:
         if max_steps < 1:

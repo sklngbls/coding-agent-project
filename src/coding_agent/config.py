@@ -80,7 +80,7 @@ class Settings:
     max_steps: int = 20
     command_timeout: float = 20.0
     max_output_chars: int = 20_000
-    max_history_tokens: int = 12_000
+    max_history_tokens: int = 50_000
 
     @classmethod
     def from_environment(
@@ -90,7 +90,7 @@ class Settings:
         max_steps: int = 20,
         command_timeout: float = 20.0,
         max_output_chars: int = 20_000,
-        max_history_tokens: int = 12_000,
+        max_history_tokens: int = 50_000,
     ) -> Settings:
         file_values = _load_environment_values(workspace)
         values = {
