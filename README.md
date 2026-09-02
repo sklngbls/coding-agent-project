@@ -1,4 +1,4 @@
-# Coding Agent
+#  XX Code-Coding Agent
 
 一个从零实现的轻量编程智能体。它使用 OpenAI 兼容的 Chat Completions 原生 tool
 calling，在用户指定的本地工作区内读写文件、精确修改文本并执行命令。项目不依赖任何
